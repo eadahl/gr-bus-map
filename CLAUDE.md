@@ -59,18 +59,32 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
           spreading with a hub taper. The spreading CONCEPT carries over; the
           noisy-GPS basis does not.
       - **Plan (road-matching build, smallest-risk first, each viewable):**
-        1. [NEXT] Map-match all routes to the OSM road graph. Build a graph from
-           `osm-src/roads.json` (Overpass, gitignored), snap each route to the road
-           edges it traverses, reconstruct clean geometry from those edges. Start
-           with the simplest method that works (nearest-edge + bearing, guided by
-           the already-decent shape), evaluate vs the raw shapes, add heavier
-           matching only where it fails. Output committed as static GeoJSON
-           (runtime stays pure). Hand-overrides for mismatches (transit center,
-           one-way pairs) committed as data.
-        2. Redo coincidence + spreading on the matched geometry (now exact and
-           clean), then bake into build-routes.mjs and the deployed map.
-        3. Workbench (internal, never deployed) if hand-tuning is still needed.
-      - To resume: "continue the road-matching build."
+        1. [DONE] Map-match all routes to the OSM road network. `scripts/match-routes.mjs`
+           fetches OSM roads (Overpass -> `osm-src/roads.json`, gitignored; bbox
+           covers the full route extent), builds a spatial grid, snaps each route's
+           resampled points to the nearest road (bearing-filtered), groups into
+           per-road runs, and rebuilds geometry from each road's own vertices so
+           coincident routes share it exactly. Gaps (transit-center loops, lots)
+           fall back to raw. 94.9% of points snap. Output `data/routes-matched-debug.geojson`
+           (gitignored). View `match-preview.html` (raw vs matched toggle).
+        2. [DONE] Spread the matched geometry. `spread-routes.mjs` now takes
+           input/output paths; run on the matched file ->
+           `data/routes-matched-spread-debug.geojson`. Clean parallel ribbons on the
+           grid corridors (hub taper still applies). View `match-spread-preview.html`
+           (stacked vs spread toggle). This is the current latest view.
+        3. [NEXT] Junction cleanup. The simple nearest-edge matcher makes small
+           loops/wobble at roundabouts, interchanges, and divided roads; these carry
+           into the spread. Fix in match-routes.mjs: handle roundabouts/divided
+           roads, or add connectivity-aware (HMM-style) matching, or smooth the
+           matched lines. Cleans up both matched geometry and the spread.
+        4. Bake into build-routes.mjs and the deployed map once it looks right.
+           Hand-overrides for stubborn spots committed as data. Workbench
+           (internal, never deployed) if still needed.
+      - Debug pages have proliferated (`debug-corridors`, `spread-preview`,
+        `spike-division`, `match-preview`, `match-spread-preview`); the first two
+        are on the superseded noisy-GPS basis and can be pruned.
+      - To resume: "continue the road-matching build" (next: rung-1.5 step 3,
+        junction cleanup).
 - [ ] **2. Live buses.** Wire in `rapid.js`. Dots that update.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
