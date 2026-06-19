@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GR Bus Map: spread on road-matched routes (debug)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+    .panel { position: absolute; z-index: 1; font: 12px/1.4 ui-monospace, 'IBM Plex Mono', SFMono-Regular, Menlo, monospace; letter-spacing: 0.02em; color: #111; background: #fff; border: 1px solid #111; border-radius: 2px; }
+    #controls { top: 12px; left: 12px; padding: 6px 10px; display: flex; gap: 8px; }
+    #controls button { font: inherit; color: inherit; background: #fff; border: 1px solid #111; border-radius: 2px; padding: 4px 8px; cursor: pointer; }
+    #controls button:hover { background: #111; color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="controls" class="panel">
+    <button id="view-toggle" type="button">view: spread</button>
+    <button id="labels-toggle" type="button">labels: on</button>
+  </div>
+  <script>
+    const POSITRON = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const FALLBACK_STYLE = { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#fafafa' } }] };
+    const GRAND_RAPIDS = [-85.6681, 42.9634];
+    const CASING_WIDTH = ['interpolate', ['linear'], ['zoom'], 10, 3.5, 14, 6.5, 18, 13];
+    const COLOR_WIDTH = ['interpolate', ['linear'], ['zoom'], 10, 1.6, 14, 3.6, 18, 8.5];
+
+    let map;
+    const toggle = document.getElementById('labels-toggle');
+    let labelsOn = true;
+    function setLabels(on) {
+      if (!map.isStyleLoaded()) return;
+      labelsOn = on;
+      for (const layer of map.getStyle().layers) if (layer.type === 'symbol') map.setLayoutProperty(layer.id, 'visibility', on ? 'visible' : 'none');
+      toggle.textContent = on ? 'labels: on' : 'labels: off';
+    }
+    toggle.addEventListener('click', () => setLabels(!labelsOn));
+
+    // 'spread' = road-matched routes pushed into parallel lanes; 'stacked' = the
+    // matched centerlines without offset (bundles hide each other).
+    let view = 'spread';
+    const viewToggle = document.getElementById('view-toggle');
+    function setView(v) {
+      view = v;
+      viewToggle.textContent = 'view: ' + v;
+      if (!map.getLayer('spread-color')) return;
+      const show = (id, on) => map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+      show('spread-casing', v === 'spread'); show('spread-color', v === 'spread');
+      show('stacked-casing', v === 'stacked'); show('stacked-color', v === 'stacked');
+    }
+    viewToggle.addEventListener('click', () => setView(view === 'spread' ? 'stacked' : 'spread'));
+
+    function addLines() {
+      if (!map.isStyleLoaded() || map.getSource('spread')) return;
+      map.addSource('stacked', { type: 'geojson', data: './data/routes-matched-debug.geojson' });
+      map.addSource('spread', { type: 'geojson', data: './data/routes-matched-spread-debug.geojson' });
+      const firstLabel = map.getStyle().layers.find((l) => l.type === 'symbol' && /^(watername|place|roadname|poi|housenumber)/.test(l.id))?.id;
+      const pair = (key, vis) => {
+        map.addLayer({ id: key + '-casing', type: 'line', source: key, layout: { 'line-cap': 'round', 'line-join': 'round', visibility: vis }, paint: { 'line-color': '#fff', 'line-width': CASING_WIDTH } }, firstLabel);
+        map.addLayer({ id: key + '-color', type: 'line', source: key, layout: { 'line-cap': 'round', 'line-join': 'round', visibility: vis }, paint: { 'line-color': ['get', 'color'], 'line-width': COLOR_WIDTH } }, firstLabel);
+      };
+      pair('stacked', view === 'stacked' ? 'visible' : 'none');
+      pair('spread', view === 'spread' ? 'visible' : 'none');
+      setLabels(labelsOn);
+    }
+
+    function buildMap(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GRAND_RAPIDS, zoom: 12 });
+      map.on('styledata', addLines);
+      map.on('load', addLines);
+    }
+    buildMap(POSITRON);
+    let fellBack = false;
+    const watchdog = setTimeout(() => { if (!fellBack && !map.isStyleLoaded()) { fellBack = true; map.remove(); buildMap(FALLBACK_STYLE); } }, 5000);
+    const styleWatch = setInterval(() => { addLines(); if (map.getSource('spread')) { clearInterval(styleWatch); clearTimeout(watchdog); } }, 300);
+  </script>
+</body>
+</html>

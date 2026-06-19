@@ -29,8 +29,11 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { detectCoincidence, toLngLat, toM } from './lib-corridors.mjs';
 
-const IN = 'data/routes.geojson';
-const OUT = 'data/routes-spread-debug.geojson';
+// Input/output default to the raw routes, but accept overrides so the same
+// spreader can run on road-matched geometry:
+//   node scripts/spread-routes.mjs data/routes-matched-debug.geojson data/routes-matched-spread-debug.geojson
+const IN = process.argv[2] || 'data/routes.geojson';
+const OUT = process.argv[3] || 'data/routes-spread-debug.geojson';
 
 // Gap between adjacent lanes, meters. Tunable. Large enough to read when zoomed
 // to the knot, small enough that bundles do not splay across whole blocks.

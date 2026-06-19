@@ -28,3 +28,4 @@ data/spike-division-debug.geojson
 # (see the Overpass fetch), so kept out of git like the GTFS source.
 osm-src/
 data/routes-matched-debug.geojson
+data/routes-matched-spread-debug.geojson
