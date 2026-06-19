@@ -9,5 +9,9 @@
 # Node (none committed yet, but keep it out if it ever appears)
 node_modules/
 
+# Raw GTFS feed. We parse it once into data/*.geojson and commit that, not the
+# source. Regenerate with: node scripts/build-routes.mjs (see CLAUDE.md).
+gtfs-src/
+
 # Netlify local CLI state
 .netlify/

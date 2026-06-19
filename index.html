@@ -81,6 +81,50 @@
     }
 
     map.on('load', () => {
+      // Route lines, parsed offline from GTFS into static GeoJSON. Each feature
+      // carries its real wayfinding `color`. See scripts/build-routes.mjs.
+      map.addSource('routes', { type: 'geojson', data: './data/routes.geojson' });
+
+      // Insert lines above roads and buildings but beneath the place/road-name
+      // labels, so text stays legible on top of the routes. In Positron the
+      // label cluster begins at the water/place/road-name symbols; everything
+      // before that (including the lone waterway_label) is geography we want
+      // the routes to sit above.
+      const firstLabel = map.getStyle().layers
+        .find((l) => l.type === 'symbol' && /^(watername|place|roadname|poi|housenumber)/.test(l.id))
+        ?.id;
+
+      // White casing underneath: a hairline border that keeps bundled routes
+      // legible where many share a corridor (Division Ave, the downtown knot).
+      map.addLayer({
+        id: 'routes-casing',
+        type: 'line',
+        source: 'routes',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 3.5,  14, 6.5,  18, 13,
+          ],
+        },
+      }, firstLabel);
+
+      // The real route color on top, narrower, rounded for a composed quality.
+      map.addLayer({
+        id: 'routes-color',
+        type: 'line',
+        source: 'routes',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 1.6,  14, 3.6,  18, 8.5,
+          ],
+        },
+      }, firstLabel);
+
       toggle.addEventListener('click', () => setLabels(!labelsOn));
     });
   </script>

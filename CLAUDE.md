@@ -21,8 +21,16 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
 
 - [x] **0. Scaffold.** Positron basemap on Grand Rapids, deployed to Netlify.
       Added a quiet labels on/off toggle.
-- [ ] **1. Routes.** Parse `shapes.txt` + `routes.txt` (GTFS) to GeoJSON. Draw
-      colored lines with white casing and rounded joins. (NEXT)
+- [x] **1. Routes.** `scripts/build-routes.mjs` parses GTFS to
+      `data/routes.geojson` (one representative line per route+direction, real
+      colors). Map draws white casing + colored line, rounded joins, inserted
+      above roads/buildings and below labels.
+- [ ] **1.5 Disambiguation (NEXT, the hard part).** Casing alone does NOT fix
+      routes sharing the exact same centerline (the downtown knot): the top
+      line hides the rest. Plan: NYC-style parallel line spreading (offset
+      coincident routes into side-by-side ribbons). Likely hybrid: algorithmic
+      offset + a small internal workbench for manual tuning. Reference behavior:
+      nycsubway.figma.site. This is the single hardest feature; expect iteration.
 - [ ] **2. Live buses.** Wire in `rapid.js`. Dots that update.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
