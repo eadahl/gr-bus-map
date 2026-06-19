@@ -25,39 +25,52 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       `data/routes.geojson` (one representative line per route+direction, real
       colors). Map draws white casing + colored line, rounded joins, inserted
       above roads/buildings and below labels.
-- [ ] **1.5 Disambiguation (NEXT, the hard part).** Casing alone does NOT fix
-      routes sharing the exact same centerline (the downtown knot): the top line
+- [ ] **1.5 Disambiguation (IN PROGRESS, the hard part).** Casing alone does NOT
+      fix routes sharing the same centerline (the downtown knot): the top line
       hides the rest. This supersedes HANDOFF.md's claim that casing is "the
       single technique" for bundled legibility. Solution: NYC-style parallel
       line spreading. Reference behavior: nycsubway.figma.site.
       - **Architecture decision:** hybrid. Algorithm proposes, human disposes.
-        Pure line-ordering is NP-hard and never clean; every polished transit
-        map is algorithm-assisted but hand-finished. Manual overrides get
-        committed as data.
-      - **The crux:** bus GTFS shapes are noisy and do NOT share exact coords
-        even on the same street, so we must DETECT coincidence with tolerance
-        before we can spread. Nail detection and the offset math is mechanical.
-      - **Rungs (smallest-risk first, each one viewable):**
-        1. [DONE] Coincidence detection + debug view.
-           `scripts/detect-corridors.mjs` resamples each route line to evenly
-           spaced points with a local bearing, spatial-hashes them, and counts
-           distinct routes within tolerance (18m, bearing within 25 deg mod 180
-           so antiparallel directions match). Output: `data/corridors-debug.geojson`
-           (gitignored, regenerable). View with `debug-corridors.html` (standalone,
-           not linked from index.html, not the deployed map): segments colored and
-           fattened by multiplicity. Validated: finds the downtown knot (19 routes
-           at Rapid Central Station) and Division Ave as a hot spine; corridor
-           membership nests cleanly as routes converge (2:{27,44} -> 3:+28 -> ...
-           -> 19:nearly all), which is the tell that detection is real, not noise.
-           Tolerances live at the top of detect-corridors.mjs (SPACING/TOL/BEARING_TOL).
-        2. [NEXT] Algorithmic spreading. Order routes per corridor, bake parallel
-           offsets into the geometry (build-routes.mjs). NYC-style baseline. Build
-           on the per-point multiplicity from rung 1: the corridor groups and
-           bearings are already computed there.
-        3. Workbench (internal, never deployed). Local tool to inspect and
-           hand-tune ordering/offsets, exports an overrides JSON the build
-           script honors. Where it goes from "mostly right" to "good."
-      - To resume: "start route disambiguation, rung 2."
+        Every polished transit map is algorithm-assisted but hand-finished.
+        Manual overrides get committed as data.
+      - **DIRECTION CHANGE (2026-06-19), the important part.** The first approach
+        treated the noisy GTFS GPS as truth and tried to spread it: detect
+        coincidence with tolerance, then offset jittery points. That is a local
+        maximum. The better foundation, decided with Erik, is to NORMALIZE routes
+        onto the actual road network first: map-match each GTFS shape to the OSM
+        roads it drives, so the line clearly and smoothly follows the road and
+        coincident routes share EXACT geometry. Then coincidence is exact (shared
+        road edges, no tolerance), spreading is a clean parallel offset, and
+        smoothness is inherent. The hard disambiguation problem dissolves instead
+        of being optimized around. Success criteria: the line clearly communicates
+        which road the route is on, and routes are smooth, appealing, easy to
+        follow, and easy to tell apart. Faithful to the road, not to the raw GPS
+        (NYC subway map is schematic, not a survey).
+      - **Validated by a spike (Division Ave):** pulled OSM roads from Overpass,
+        merged the Division centerline, snapped routes 1 and 90 onto it, and they
+        rendered as clean parallel road-following lanes. See `scripts/spike-division.mjs`
+        and `spike-division.html` (throwaway reference, may be deleted).
+      - **Superseded earlier work (kept on disk as reference, not the path forward):**
+        - `scripts/detect-corridors.mjs` + `debug-corridors.html`: coincidence
+          detection on noisy GPS (found the 19-route knot, Division spine).
+        - `scripts/lib-corridors.mjs`: shared detect pipeline (project, resample,
+          spatial-hash, count). Some helpers (projection, geometry) still useful.
+        - `scripts/spread-routes.mjs` + `spread-preview.html`: offset-the-GPS
+          spreading with a hub taper. The spreading CONCEPT carries over; the
+          noisy-GPS basis does not.
+      - **Plan (road-matching build, smallest-risk first, each viewable):**
+        1. [NEXT] Map-match all routes to the OSM road graph. Build a graph from
+           `osm-src/roads.json` (Overpass, gitignored), snap each route to the road
+           edges it traverses, reconstruct clean geometry from those edges. Start
+           with the simplest method that works (nearest-edge + bearing, guided by
+           the already-decent shape), evaluate vs the raw shapes, add heavier
+           matching only where it fails. Output committed as static GeoJSON
+           (runtime stays pure). Hand-overrides for mismatches (transit center,
+           one-way pairs) committed as data.
+        2. Redo coincidence + spreading on the matched geometry (now exact and
+           clean), then bake into build-routes.mjs and the deployed map.
+        3. Workbench (internal, never deployed) if hand-tuning is still needed.
+      - To resume: "continue the road-matching build."
 - [ ] **2. Live buses.** Wire in `rapid.js`. Dots that update.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.

@@ -22,3 +22,9 @@ gtfs-src/
 #   node scripts/spread-routes.mjs     -> spread-preview.html
 data/corridors-debug.geojson
 data/routes-spread-debug.geojson
+data/spike-division-debug.geojson
+
+# Raw OSM road network pulled from Overpass for road-normalization. Regenerable
+# (see the Overpass fetch), so kept out of git like the GTFS source.
+osm-src/
+data/routes-matched-debug.geojson
