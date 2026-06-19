@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Grand Rapids Live Bus Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!--
+    MapLibre GL JS: the open-source map rendering library. No API key needed.
+    Pinned to a fixed version so the build stays reproducible.
+  -->
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+  <style>
+    /* Full-bleed map. The basemap's whole job is to disappear, so the page
+       is nothing but the map: no chrome, no padding, near-white ground. */
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+
+    /* Label toggle. Quiet, on-brand: black on white, monospace, hairline
+       border. Sits out of the way in the top-left. */
+    #labels-toggle {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 1;
+      padding: 6px 10px;
+      font: 12px/1 ui-monospace, 'IBM Plex Mono', SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.02em;
+      color: #111;
+      background: #fff;
+      border: 1px solid #111;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    #labels-toggle:hover { background: #111; color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <button id="labels-toggle" type="button">labels: on</button>
+
+  <script>
+    // Carto Positron: a near-white, low-contrast basemap served from CARTO's
+    // public CDN. Usable without an API key. This is the labeled variant: it
+    // carries place, water, and major-road names to orient the viewer.
+    // The handoff calls for curated label restraint (major orienting names at
+    // rest, the rest on focus); that curation is a Phase 1 refinement. Protomaps
+    // is the later self-contained finish. To go back to bare landmarks, swap
+    // "positron" for "positron-nolabels" below.
+    const POSITRON =
+      'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+    // Downtown Grand Rapids, MI. MapLibre takes [longitude, latitude].
+    const GRAND_RAPIDS = [-85.6681, 42.9634];
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: POSITRON,
+      center: GRAND_RAPIDS,
+      zoom: 12,
+    });
+
+    // Label toggle. Positron carries its labels as "symbol" layers, so showing
+    // or hiding every symbol layer flips all map text at once. No style reload,
+    // so it is instant. We wait for the style to finish loading before touching
+    // layers, then track on/off state in one boolean.
+    const toggle = document.getElementById('labels-toggle');
+    let labelsOn = true;
+
+    function setLabels(on) {
+      labelsOn = on;
+      const visibility = on ? 'visible' : 'none';
+      for (const layer of map.getStyle().layers) {
+        if (layer.type === 'symbol') {
+          map.setLayoutProperty(layer.id, 'visibility', visibility);
+        }
+      }
+      toggle.textContent = on ? 'labels: on' : 'labels: off';
+    }
+
+    map.on('load', () => {
+      toggle.addEventListener('click', () => setLabels(!labelsOn));
+    });
+  </script>
+</body>
+</html>

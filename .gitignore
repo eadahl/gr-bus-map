@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Editor / tooling cruft
+*.swp
+.vscode/
+.idea/
+
+# Node (none committed yet, but keep it out if it ever appears)
+node_modules/
+
+# Netlify local CLI state
+.netlify/
