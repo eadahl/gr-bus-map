@@ -52,24 +52,34 @@
     const POSITRON =
       'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 
+    // Bare fallback: a near-white background and nothing else. If the Carto CDN
+    // never delivers the basemap (offline, blocked, or down), we rebuild the map
+    // on this bare ground so the routes are never hostage to an external
+    // dependency. A bus map with no streets is still useful; a blank screen is
+    // not. This matches the project aim of a self-contained, veridical build (the
+    // endgame is local Protomaps).
+    const FALLBACK_STYLE = {
+      version: 8,
+      sources: {},
+      layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#fafafa' } }],
+    };
+
     // Downtown Grand Rapids, MI. MapLibre takes [longitude, latitude].
     const GRAND_RAPIDS = [-85.6681, 42.9634];
 
-    const map = new maplibregl.Map({
-      container: 'map',
-      style: POSITRON,
-      center: GRAND_RAPIDS,
-      zoom: 12,
-    });
+    // The map is built by buildMap so we can rebuild it from scratch if the
+    // basemap never loads (see the watchdog below). `map` is reassigned there, so
+    // setLabels and addRoutes close over the variable, not a fixed instance.
+    let map;
 
-    // Label toggle. Positron carries its labels as "symbol" layers, so showing
-    // or hiding every symbol layer flips all map text at once. No style reload,
-    // so it is instant. We wait for the style to finish loading before touching
-    // layers, then track on/off state in one boolean.
+    // Label toggle. Positron carries its labels as "symbol" layers, so showing or
+    // hiding every symbol layer flips all map text at once, instantly. In the bare
+    // fallback there are no symbol layers, so this has nothing to toggle.
     const toggle = document.getElementById('labels-toggle');
     let labelsOn = true;
 
     function setLabels(on) {
+      if (!map.isStyleLoaded()) return;
       labelsOn = on;
       const visibility = on ? 'visible' : 'none';
       for (const layer of map.getStyle().layers) {
@@ -79,8 +89,16 @@
       }
       toggle.textContent = on ? 'labels: on' : 'labels: off';
     }
+    toggle.addEventListener('click', () => setLabels(!labelsOn));
 
-    map.on('load', () => {
+    // Draw the routes as soon as the basemap STYLE is parsed, without waiting for
+    // its tiles, sprites, and glyphs to finish downloading. Gating on the 'load'
+    // event (which does wait for all that) means a slow basemap CDN leaves the
+    // routes invisible even though our own GeoJSON loaded fine. Guarded on the
+    // source, so it is idempotent across the repeated triggers and a rebuild.
+    function addRoutes() {
+      if (!map.isStyleLoaded() || map.getSource('routes')) return;
+
       // Route lines, parsed offline from GTFS into static GeoJSON. Each feature
       // carries its real wayfinding `color`. See scripts/build-routes.mjs.
       map.addSource('routes', { type: 'geojson', data: './data/routes.geojson' });
@@ -89,7 +107,8 @@
       // labels, so text stays legible on top of the routes. In Positron the
       // label cluster begins at the water/place/road-name symbols; everything
       // before that (including the lone waterway_label) is geography we want
-      // the routes to sit above.
+      // the routes to sit above. In the bare fallback there are no labels, so
+      // firstLabel is undefined and the routes simply sit on top of the ground.
       const firstLabel = map.getStyle().layers
         .find((l) => l.type === 'symbol' && /^(watername|place|roadname|poi|housenumber)/.test(l.id))
         ?.id;
@@ -125,8 +144,40 @@
         },
       }, firstLabel);
 
-      toggle.addEventListener('click', () => setLabels(!labelsOn));
-    });
+      // Restore the current label choice (matters after a rebuild onto bare ground).
+      setLabels(labelsOn);
+    }
+
+    // (Re)create the map with a given style and wire the route-drawing triggers.
+    // 'styledata' fires on the initial style parse (early, before tiles finish),
+    // 'load' when the map first renders. addRoutes is idempotent, so both fire safely.
+    function buildMap(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GRAND_RAPIDS, zoom: 12 });
+      map.on('styledata', addRoutes);
+      map.on('load', addRoutes);
+    }
+
+    // Normal path: load the real basemap directly (no flash of bare ground). If
+    // its style has not parsed within a few seconds, the CDN is not coming
+    // (offline, blocked, hung, or a hard error), and a setStyle cannot recover a
+    // map whose style never loaded. So we tear the map down and rebuild it on the
+    // bare near-white ground, where the routes are guaranteed to draw. The poll
+    // cancels the watchdog the moment the routes are up, whichever style won.
+    buildMap(POSITRON);
+
+    let fellBack = false;
+    const watchdog = setTimeout(() => {
+      if (!fellBack && !map.isStyleLoaded()) {
+        fellBack = true;
+        map.remove();
+        buildMap(FALLBACK_STYLE);
+      }
+    }, 5000);
+
+    const styleWatch = setInterval(() => {
+      addRoutes();
+      if (map.getSource('routes')) { clearInterval(styleWatch); clearTimeout(watchdog); }
+    }, 300);
   </script>
 </body>
 </html>
