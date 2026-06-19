@@ -15,3 +15,8 @@ gtfs-src/
 
 # Netlify local CLI state
 .netlify/
+
+# Debug-only corridor detection output (rung 1 of disambiguation). Large and
+# fully regenerable, so we keep it out of git. Build it before opening
+# debug-corridors.html: node scripts/detect-corridors.mjs (see CLAUDE.md).
+data/corridors-debug.geojson

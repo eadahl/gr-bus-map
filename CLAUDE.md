@@ -38,17 +38,26 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
         even on the same street, so we must DETECT coincidence with tolerance
         before we can spread. Nail detection and the offset math is mechanical.
       - **Rungs (smallest-risk first, each one viewable):**
-        1. Coincidence detection + debug view. Chop routes into segments,
-           cluster overlapping segments (few meters, similar bearing), render a
-           debug-only highlight of detected shared corridors. Prove it finds the
-           downtown knot and Division Ave before building on top. Does not touch
-           the deployed map.
-        2. Algorithmic spreading. Order routes per corridor, bake parallel
-           offsets into the geometry (build-routes.mjs). NYC-style baseline.
+        1. [DONE] Coincidence detection + debug view.
+           `scripts/detect-corridors.mjs` resamples each route line to evenly
+           spaced points with a local bearing, spatial-hashes them, and counts
+           distinct routes within tolerance (18m, bearing within 25 deg mod 180
+           so antiparallel directions match). Output: `data/corridors-debug.geojson`
+           (gitignored, regenerable). View with `debug-corridors.html` (standalone,
+           not linked from index.html, not the deployed map): segments colored and
+           fattened by multiplicity. Validated: finds the downtown knot (19 routes
+           at Rapid Central Station) and Division Ave as a hot spine; corridor
+           membership nests cleanly as routes converge (2:{27,44} -> 3:+28 -> ...
+           -> 19:nearly all), which is the tell that detection is real, not noise.
+           Tolerances live at the top of detect-corridors.mjs (SPACING/TOL/BEARING_TOL).
+        2. [NEXT] Algorithmic spreading. Order routes per corridor, bake parallel
+           offsets into the geometry (build-routes.mjs). NYC-style baseline. Build
+           on the per-point multiplicity from rung 1: the corridor groups and
+           bearings are already computed there.
         3. Workbench (internal, never deployed). Local tool to inspect and
            hand-tune ordering/offsets, exports an overrides JSON the build
            script honors. Where it goes from "mostly right" to "good."
-      - To resume: "start route disambiguation, rung 1."
+      - To resume: "start route disambiguation, rung 2."
 - [ ] **2. Live buses.** Wire in `rapid.js`. Dots that update.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.

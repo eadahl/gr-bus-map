@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GR Bus Map: corridor detection (debug)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!--
+    DEBUG VIEW, rung 1 of route disambiguation. Not the deployed map, not linked
+    from index.html. It draws data/corridors-debug.geojson (built by
+    scripts/detect-corridors.mjs) so we can see WHERE the detector thinks routes
+    run together before we spend any effort spreading them apart (rung 2).
+
+    Read the picture like a heatmap: faint grey is solo route, and the hotter and
+    fatter a line gets, the more distinct routes the detector found sharing that
+    spot. The downtown knot should glow; Division Ave should read as a clear hot
+    spine. If something lights up that is not really shared, the tolerances in the
+    build script are wrong, and this is where we would catch it.
+  -->
+
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+
+    /* Shared chrome: black on white, monospace, hairline border. Matches the
+       main map's toggle so the debug tool feels of a piece. */
+    .panel {
+      position: absolute;
+      z-index: 1;
+      font: 12px/1.4 ui-monospace, 'IBM Plex Mono', SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.02em;
+      color: #111;
+      background: #fff;
+      border: 1px solid #111;
+      border-radius: 2px;
+    }
+
+    #controls { top: 12px; left: 12px; padding: 6px 10px; display: flex; gap: 8px; }
+    #controls button { font: inherit; color: inherit; background: #fff; border: 1px solid #111; border-radius: 2px; padding: 4px 8px; cursor: pointer; }
+    #controls button:hover { background: #111; color: #fff; }
+    #controls button.active { background: #111; color: #fff; }
+
+    /* Legend, bottom-left. The swatches are filled from the same color stops the
+       map uses, so the key never drifts from the render. */
+    #legend { bottom: 12px; left: 12px; padding: 8px 10px; }
+    #legend .title { font-weight: bold; margin-bottom: 6px; }
+    #legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    #legend .sw { width: 22px; height: 6px; border-radius: 3px; }
+
+    /* Readout of whatever segment the cursor is over. */
+    #readout { top: 12px; right: 12px; padding: 6px 10px; max-width: 260px; display: none; }
+    #readout.show { display: block; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="controls" class="panel">
+    <button id="shared-toggle" type="button" class="active">shared only</button>
+    <button id="labels-toggle" type="button">labels: on</button>
+  </div>
+
+  <div id="legend" class="panel">
+    <div class="title">routes sharing a corridor</div>
+    <div id="legend-rows"></div>
+  </div>
+
+  <div id="readout" class="panel"></div>
+
+  <script>
+    const POSITRON = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const GRAND_RAPIDS = [-85.6681, 42.9634];
+
+    // Bare fallback: near-white ground, nothing else. If the Carto CDN never
+    // delivers the basemap, we switch to this so the corridor detection is still
+    // viewable without streets. Same approach as the main map.
+    const FALLBACK_STYLE = {
+      version: 8,
+      sources: {},
+      layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#fafafa' } }],
+    };
+
+    // Color and width as a function of `count` (distinct routes sharing a spot).
+    // Solo route is nearly invisible context; the ramp from 2 up runs cool to hot
+    // so depth of bundling reads at a glance. These stops are shared by the map
+    // paint and the legend below, so the two cannot disagree.
+    const STOPS = [
+      { count: 1,  color: '#dcdcdc' },
+      { count: 2,  color: '#7fb3d1' },
+      { count: 3,  color: '#4aa3df' },
+      { count: 5,  color: '#3f6fd1' },
+      { count: 8,  color: '#7b52d1' },
+      { count: 12, color: '#c0392b' },
+      { count: 19, color: '#e8590c' },
+    ];
+
+    // Build the color interpolate expression from the stops, so map and legend
+    // share one source of truth.
+    const colorExpr = (() => {
+      const expr = ['interpolate', ['linear'], ['get', 'count']];
+      for (const s of STOPS) expr.push(s.count, s.color);
+      return expr;
+    })();
+    const widthExpr = [
+      'interpolate', ['linear'], ['zoom'],
+      11, ['interpolate', ['linear'], ['get', 'count'], 1, 0.6, 2, 1.6, 19, 6],
+      15, ['interpolate', ['linear'], ['get', 'count'], 1, 1.2, 2, 4, 19, 16],
+      18, ['interpolate', ['linear'], ['get', 'count'], 1, 2, 2, 8, 19, 34],
+    ];
+
+    // Built by buildMap so the map can be rebuilt from scratch if the basemap
+    // never loads (see the watchdog below). `map` is reassigned there, so the
+    // functions below close over the variable, not a fixed instance.
+    let map;
+
+    // Labels toggle, same as the main map: flip every symbol layer at once. In
+    // the bare fallback there are no symbol layers, so it has nothing to toggle.
+    let labelsOn = true;
+    function setLabels(on) {
+      if (!map.isStyleLoaded()) return;
+      labelsOn = on;
+      for (const layer of map.getStyle().layers) {
+        if (layer.type === 'symbol') {
+          map.setLayoutProperty(layer.id, 'visibility', on ? 'visible' : 'none');
+        }
+      }
+      document.getElementById('labels-toggle').textContent = on ? 'labels: on' : 'labels: off';
+    }
+    document.getElementById('labels-toggle').addEventListener('click', () => setLabels(!labelsOn));
+
+    // "shared only" hides solo route (count 1) so the bundled corridors stand
+    // alone. On by default: the whole point of the view is the shared parts.
+    let sharedOnly = true;
+    function setShared(on) {
+      sharedOnly = on;
+      const btn = document.getElementById('shared-toggle');
+      btn.classList.toggle('active', on);
+      if (map.getLayer('corridors')) map.setFilter('corridors', on ? ['>=', ['get', 'count'], 2] : null);
+    }
+    document.getElementById('shared-toggle').addEventListener('click', () => setShared(!sharedOnly));
+
+    // Draw the corridors as soon as the basemap STYLE is parsed, without waiting
+    // for its tiles, sprites, and glyphs to finish. Gating on 'load' (which does
+    // wait for all that) means a slow basemap CDN leaves the debug view blank even
+    // though our data loaded fine. Guards on the source rather than a flag, so it
+    // is idempotent and re-runs cleanly after the fallback setStyle wipes layers.
+    function addCorridors() {
+      if (!map.isStyleLoaded() || map.getSource('corridors')) return;
+
+      map.addSource('corridors', { type: 'geojson', data: './data/corridors-debug.geojson' });
+
+      const firstLabel = map.getStyle().layers
+        .find((l) => l.type === 'symbol' && /^(watername|place|roadname|poi|housenumber)/.test(l.id))
+        ?.id;
+
+      // Hotter, fatter where more routes bundle. Sorted so the highest counts
+      // paint last (on top), which keeps the busy spines from being buried.
+      map.addLayer({
+        id: 'corridors',
+        type: 'line',
+        source: 'corridors',
+        layout: { 'line-cap': 'round', 'line-join': 'round', 'line-sort-key': ['get', 'count'] },
+        paint: { 'line-color': colorExpr, 'line-width': widthExpr, 'line-opacity': 0.9 },
+        filter: ['>=', ['get', 'count'], 2],
+      }, firstLabel);
+
+      // Hover readout: which routes, how many.
+      const readout = document.getElementById('readout');
+      map.on('mousemove', 'corridors', (e) => {
+        const p = e.features[0].properties;
+        const routes = Array.isArray(p.routes) ? p.routes : JSON.parse(p.routes);
+        readout.classList.add('show');
+        readout.innerHTML = `<strong>${p.count} routes</strong><br>${routes.join(', ')}`;
+        map.getCanvas().style.cursor = 'crosshair';
+      });
+      map.on('mouseleave', 'corridors', () => {
+        readout.classList.remove('show');
+        map.getCanvas().style.cursor = '';
+      });
+
+      // Reapply the current toggle choices (matters after a rebuild onto bare ground).
+      setShared(sharedOnly);
+      setLabels(labelsOn);
+    }
+
+    // (Re)create the map with a given style and wire the corridor-drawing triggers.
+    function buildMap(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GRAND_RAPIDS, zoom: 12 });
+      map.on('styledata', addCorridors);
+      map.on('load', addCorridors);
+    }
+
+    // Normal path: load the real basemap directly. If its style has not parsed
+    // within a few seconds, the CDN is not coming, and a setStyle cannot recover a
+    // map whose style never loaded. So we tear the map down and rebuild it on the
+    // bare ground, where the corridors are guaranteed to draw. The poll cancels
+    // the watchdog the moment the corridors are up, whichever style won.
+    buildMap(POSITRON);
+
+    let fellBack = false;
+    const watchdog = setTimeout(() => {
+      if (!fellBack && !map.isStyleLoaded()) {
+        fellBack = true;
+        map.remove();
+        buildMap(FALLBACK_STYLE);
+      }
+    }, 5000);
+
+    const styleWatch = setInterval(() => {
+      addCorridors();
+      if (map.getSource('corridors')) { clearInterval(styleWatch); clearTimeout(watchdog); }
+    }, 300);
+
+    // Legend rows from the same stops the map paints with.
+    const rows = document.getElementById('legend-rows');
+    for (const s of STOPS) {
+      const div = document.createElement('div');
+      div.className = 'row';
+      const label = s.count === 1 ? '1 (solo)' : s.count === 19 ? '19 (knot)' : String(s.count);
+      div.innerHTML = `<span class="sw" style="background:${s.color}"></span>${label}`;
+      rows.appendChild(div);
+    }
+  </script>
+</body>
+</html>
