@@ -26,11 +26,29 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       colors). Map draws white casing + colored line, rounded joins, inserted
       above roads/buildings and below labels.
 - [ ] **1.5 Disambiguation (NEXT, the hard part).** Casing alone does NOT fix
-      routes sharing the exact same centerline (the downtown knot): the top
-      line hides the rest. Plan: NYC-style parallel line spreading (offset
-      coincident routes into side-by-side ribbons). Likely hybrid: algorithmic
-      offset + a small internal workbench for manual tuning. Reference behavior:
-      nycsubway.figma.site. This is the single hardest feature; expect iteration.
+      routes sharing the exact same centerline (the downtown knot): the top line
+      hides the rest. This supersedes HANDOFF.md's claim that casing is "the
+      single technique" for bundled legibility. Solution: NYC-style parallel
+      line spreading. Reference behavior: nycsubway.figma.site.
+      - **Architecture decision:** hybrid. Algorithm proposes, human disposes.
+        Pure line-ordering is NP-hard and never clean; every polished transit
+        map is algorithm-assisted but hand-finished. Manual overrides get
+        committed as data.
+      - **The crux:** bus GTFS shapes are noisy and do NOT share exact coords
+        even on the same street, so we must DETECT coincidence with tolerance
+        before we can spread. Nail detection and the offset math is mechanical.
+      - **Rungs (smallest-risk first, each one viewable):**
+        1. Coincidence detection + debug view. Chop routes into segments,
+           cluster overlapping segments (few meters, similar bearing), render a
+           debug-only highlight of detected shared corridors. Prove it finds the
+           downtown knot and Division Ave before building on top. Does not touch
+           the deployed map.
+        2. Algorithmic spreading. Order routes per corridor, bake parallel
+           offsets into the geometry (build-routes.mjs). NYC-style baseline.
+        3. Workbench (internal, never deployed). Local tool to inspect and
+           hand-tune ordering/offsets, exports an overrides JSON the build
+           script honors. Where it goes from "mostly right" to "good."
+      - To resume: "start route disambiguation, rung 1."
 - [ ] **2. Live buses.** Wire in `rapid.js`. Dots that update.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
