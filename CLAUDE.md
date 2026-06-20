@@ -336,19 +336,25 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
   - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
     occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
     ride on the Vehicles `occ` field (pending: is it ever non-zero?).
-  - OBSERVABILITY: `observe.html` (dev tool, run via the local server, open localhost:8000/observe.html)
-    shows collector health (log sizes + growth via HEAD), a live fleet table of every captured
-    variable (driver fields excluded), and live stats: on-time breakdown, occupancy>empty count, and
-    stopped buses split into AT-A-STOP vs elsewhere (speed~0 within 40 m of a GetAllStops location).
-    Early reads: ~17 of 18 stopped buses are at a designated stop (the at-stop inference is clean), and
-    occupancy reads all-Empty so far (likely not live - watch over peak before building crowding).
-  - STRING-LINE (Marey): `scripts/build-stringline.mjs [routeId] [--hours N]` reads the GPS log +
-    routes-final, snaps each point to the route's reference line for distance-along, and writes
-    data/stringline.json (gitignored, per-trip time/distance series); `stringline.html` renders it
-    (x=time, y=distance, lines by direction). Slope=speed, flat=dwell/layover, converging same-color
-    lines=bunching, gaps=service holes. Auto-picks the busiest route if none given. Route 90 (Silver
-    Line) over 5h shows clean regular ~headway service with terminal layovers; rebuild per route to
-    hunt bunching/irregularity.
+  - OBSERVABILITY DASHBOARD: `observe.html` (dev tool, local only - reads the gitignored logs +
+    hits the live APIs; open localhost:8000/observe.html). ONE TABBED page (Erik's call: all interim
+    artifacts in one place):
+    - LIVE: collector health (log size + growth via HEAD), live stats (on-time / late, stopped split
+      into AT-A-STOP vs elsewhere via speed~0 within 40 m of a stop, occupancy>empty, routes detoured),
+      a mini fleet map (routes faint + live dots, at-stop ringed, late red-outlined), on-time stacked
+      bar, session sparklines, and a sortable live fleet table of every captured variable (driver
+      fields excluded; numeric sort fixed).
+    - DEVIATION: the predicted-vs-measured mirrored beeswarm (from the reliability log).
+    - STRING-LINE: the Marey, computed IN-BROWSER from the GPS log (route + hours pickers); slope=
+      speed, flat=dwell/layover, converging same-color lines=bunching, gaps=service holes. Route 90
+      shows clean regular headway with terminal layovers.
+    - TRACKS: accumulated raw GPS trails (all trips, faint, colored by route, broken at >600 m jumps so
+      no spray), the network drawing itself from real movement; refreshes while the tab is open.
+    Findings: ~17/18 stopped buses are at a designated stop (at-stop inference clean); occupancy
+    all-Empty so far (likely not live - watch over peak before building crowding).
+    `scripts/build-stringline.mjs [routeId] [--hours N]` is kept as an OFFLINE Marey builder (writes
+    data/stringline.json) for windows too large for the browser; the standalone stringline.html was
+    folded into the dashboard tab and removed.
 - [x] **3. Calm motion (DONE + deployed 2026-06-20).** index.html glides each bus from its last
       drawn position to its new (snapped/pinned) target over the poll interval via requestAnimationFrame
       (`anim` map keyed per vehicle, `lerp`/`curPos`, GLIDE_MS=10000). Draws on every poll too, not

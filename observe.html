@@ -10,8 +10,13 @@
       font:13px/1.5 ui-monospace,'IBM Plex Mono',SFMono-Regular,Menlo,monospace; }
     .wrap { max-width:1200px; margin:0 auto; padding:18px 20px 60px; }
     h1 { font-size:15px; font-weight:600; margin:0; letter-spacing:.02em; }
-    .sub { color:var(--mut); font-size:12px; margin:2px 0 18px; }
+    .sub { color:var(--mut); font-size:12px; margin:2px 0 14px; }
     .sec { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--mut); margin:22px 0 8px; }
+    .tabs { display:flex; gap:6px; margin:14px 0 4px; border-bottom:0.5px solid var(--line); }
+    .tabbtn { font:inherit; font-size:12px; color:var(--mut); background:none; border:none; border-bottom:2px solid transparent;
+      padding:7px 12px; cursor:pointer; margin-bottom:-0.5px; }
+    .tabbtn.on { color:var(--ink); border-bottom-color:var(--ink); }
+    .tabbtn:hover { color:var(--ink); }
     .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
     .card { background:#fff; border:0.5px solid var(--line); border-radius:8px; padding:10px 12px; }
     .card .k { color:var(--mut); font-size:11px; }
@@ -26,7 +31,9 @@
     .late { color:var(--bad); } .atstop { color:var(--good); }
     .tbl-wrap { max-height:560px; overflow:auto; border:0.5px solid var(--line); border-radius:8px; background:#fff; }
     .muted { color:var(--mut); }
-    .pill { font-size:11px; padding:1px 6px; border-radius:10px; border:0.5px solid var(--line); }
+    select { font:inherit; font-size:12px; padding:4px 6px; border:0.5px solid var(--line); border-radius:4px; background:#fff; }
+    .leg { display:flex; gap:16px; margin:10px 2px 0; font-size:12px; color:#555; align-items:center; flex-wrap:wrap; }
+    .leg b { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:6px; vertical-align:3px; }
   </style>
 </head>
 <body>
@@ -34,29 +41,61 @@
     <h1>collection observability</h1>
     <div class="sub" id="clock">starting...</div>
 
-    <div class="sec">collectors (local log files)</div>
-    <div class="cards" id="collectors"></div>
+    <nav class="tabs">
+      <button class="tabbtn on" data-tab="live">live</button>
+      <button class="tabbtn" data-tab="dev">deviation</button>
+      <button class="tabbtn" data-tab="string">string-line</button>
+      <button class="tabbtn" data-tab="tracks">tracks</button>
+    </nav>
 
-    <div class="sec">live fleet snapshot (direct from the API)</div>
-    <div class="cards" id="stats"></div>
+    <section id="tab-live" class="tab">
+      <div class="sec">collectors (local log files)</div>
+      <div class="cards" id="collectors"></div>
 
-    <div class="sec">visuals (exploration)</div>
-    <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:14px;align-items:start;margin-bottom:6px">
-      <div class="card" style="padding:8px 8px 6px">
-        <div class="k" style="margin-bottom:4px">live fleet map <span class="muted" id="mapnote"></span></div>
-        <svg id="minimap" width="100%" viewBox="0 0 560 420" style="display:block"></svg>
+      <div class="sec">live fleet snapshot (direct from the API)</div>
+      <div class="cards" id="stats"></div>
+
+      <div class="sec">visuals</div>
+      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:14px;align-items:start;margin-bottom:6px">
+        <div class="card" style="padding:8px 8px 6px">
+          <div class="k" style="margin-bottom:4px">live fleet map <span class="muted" id="mapnote"></span></div>
+          <svg id="minimap" width="100%" viewBox="0 0 560 420" style="display:block"></svg>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="card"><div class="k">on time / late / starting</div><div id="otbar" style="margin-top:6px"></div></div>
+          <div class="card"><div class="k" style="margin-bottom:6px">this session</div><div id="sparks" style="display:flex;gap:16px;flex-wrap:wrap"></div></div>
+        </div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:12px">
-        <div class="card"><div class="k">on time / late / starting</div><div id="otbar" style="margin-top:6px"></div></div>
-        <div class="card"><div class="k" style="margin-bottom:6px">this session</div><div id="sparks" style="display:flex;gap:16px;flex-wrap:wrap"></div></div>
+
+      <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
+      <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    <section id="tab-dev" class="tab" hidden>
+      <div class="sec">deviation beeswarm <span class="muted" id="beenote"></span></div>
+      <div class="card"><svg id="beeswarm" width="100%" viewBox="0 0 1000 280" style="display:block"></svg></div>
+    </section>
+
+    <section id="tab-string" class="tab" hidden>
+      <div class="sec">string-line (Marey)</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+        <label class="muted">route</label><select id="sl-route"></select>
+        <label class="muted">hours</label><select id="sl-hours"><option>3</option><option selected>5</option><option>8</option></select>
+        <span class="sub" id="sl-note" style="margin:0"></span>
       </div>
-    </div>
+      <div class="card"><svg id="sl-svg" width="100%" viewBox="0 0 1000 540" style="display:block"></svg></div>
+      <div class="leg" id="sl-legend"></div>
+    </section>
 
-    <div class="sec">deviation beeswarm <span class="muted" id="beenote"></span></div>
-    <div class="card" style="margin-bottom:6px"><svg id="beeswarm" width="100%" viewBox="0 0 1000 230" style="display:block"></svg></div>
-
-    <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
-    <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
+    <section id="tab-tracks" class="tab" hidden>
+      <div class="sec">accumulated tracks (raw GPS trails)</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+        <label class="muted">hours</label><select id="tr-hours"><option>2</option><option selected>5</option><option>10</option><option value="99">all</option></select>
+        <button id="tr-refresh" style="font:inherit;font-size:12px;border:0.5px solid var(--line);border-radius:4px;background:#fff;padding:4px 10px;cursor:pointer">refresh</button>
+        <span class="sub" id="tr-note" style="margin:0"></span>
+      </div>
+      <div class="card" style="padding:8px"><svg id="tr-svg" width="100%" viewBox="0 0 560 420" style="display:block"></svg></div>
+    </section>
   </div>
 
   <script>
@@ -66,16 +105,26 @@
       { name: 'detour-log', path: './data/detour-log.ndjson', fresh: 1800 },
       { name: 'reliability-log', path: './data/reliability-log.ndjson', fresh: 30 },
     ];
-    const COS = Math.cos(42.96 * Math.PI / 180), MPD = 111320;
-    const AT_STOP_M = 40;             // speed~0 within this of a stop = dwelling
+    const COS = Math.cos(42.96 * Math.PI / 180), MPD = 111320, AT_STOP_M = 40;
     const distM = (a, b) => Math.hypot((a[0]-b[0])*COS*MPD, (a[1]-b[1])*MPD);
     const ago = (ms) => ms == null ? '-' : (ms<60000? Math.round(ms/1000)+'s' : Math.round(ms/60000)+'m') + ' ago';
 
-    let stops = [], routes = {}, sortKey = 'route', sortDir = 1;
-    const logState = {}; // name -> {size, prevSize, lastGrow}
-    let proj = null, MM_W = 560, MM_H = 420;   // mini-map projection
-    const hist = [];                            // session time series for sparklines
+    let stops = [], routes = {}, routesFinal = null, sortKey = 'route', sortDir = 1;
+    const logState = {};
+    let proj = null, MM_W = 560, MM_H = 420;
+    const hist = [];
+    let logCache = null, logAt = 0;
 
+    // ── tabs ─────────────────────────────────────────────────────────────────
+    function showTab(name) {
+      document.querySelectorAll('.tab').forEach(s => s.hidden = s.id !== 'tab-' + name);
+      document.querySelectorAll('.tabbtn').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+      if (name === 'string') renderStringline();
+      if (name === 'tracks') renderTracks();
+    }
+    document.querySelectorAll('.tabbtn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+    // ── static data ────────────────────────────────────────────────────────────
     async function loadStatic() {
       try {
         const s = await (await fetch(`${REST}/Stops/GetAllStops?_=${Date.now()}`)).json();
@@ -86,13 +135,12 @@
         for (const x of r) routes[String(x.RouteId)] = { color: '#'+(x.Color||'888888').replace('#',''), name: x.ShortName, det: /_DET_/.test(x.RouteTraceFilename||'') };
       } catch {}
       try {
-        const g = await (await fetch(`./data/routes-final.geojson?_=${Date.now()}`)).json();
-        buildMiniMap(g);
+        routesFinal = await (await fetch(`./data/routes-final.geojson?_=${Date.now()}`)).json();
+        buildMiniMap(routesFinal);
+        populateRouteSelect();
       } catch {}
     }
 
-    // Project the drawn routes into the mini-map SVG once (static background); the
-    // bus dots are redrawn over it each poll.
     function buildMiniMap(g) {
       let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
       const lines = [];
@@ -108,126 +156,120 @@
         let d=''; L.c.forEach((p,i)=>{ const [x,y]=proj(p[0],p[1]); d+=(i?'L':'M')+x.toFixed(1)+','+y.toFixed(1); });
         return `<path d="${d}" fill="none" stroke="${L.color}" stroke-width="1" opacity="0.3"/>`;
       }).join('');
-      const svg = document.getElementById('minimap');
-      svg.setAttribute('viewBox', `0 0 ${MM_W} ${MM_H}`);
-      svg.innerHTML = `<g>${paths}</g><g id="busdots"></g>`;
+      for (const id of ['minimap','tr-svg']) { const svg = document.getElementById(id); if (svg) svg.setAttribute('viewBox', `0 0 ${MM_W} ${MM_H}`); }
+      const mm = document.getElementById('minimap');
+      if (mm) mm.innerHTML = `<g>${paths}</g><g id="busdots"></g>`;
+      window.__routePaths = `<g>${paths}</g>`;
     }
 
-    function spark(label, color, vals) {
-      const W=130, H=34, n=vals.length;
-      const max=Math.max(1,...vals), min=Math.min(0,...vals), rng=(max-min)||1;
-      const pts = vals.map((v,i)=>`${(i/Math.max(1,n-1)*W).toFixed(1)},${(H-((v-min)/rng)*(H-6)-3).toFixed(1)}`).join(' ');
-      const cur = vals.length ? vals[vals.length-1] : '-';
-      return `<div><div class="k">${label}: <b style="color:var(--ink)">${cur}</b></div>
-        <svg width="${W}" height="${H}" style="display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2"/></svg></div>`;
+    function populateRouteSelect() {
+      const ids = routesFinal.features.filter(f => !f.properties.kind).map(f => String(f.properties.routeId))
+        .sort((a,b) => (+a||1e9)-(+b||1e9));
+      const sel = document.getElementById('sl-route');
+      sel.innerHTML = ids.map(id => `<option ${id==='90'?'selected':''}>${id}</option>`).join('');
+      sel.onchange = renderStringline;
+      document.getElementById('sl-hours').onchange = renderStringline;
+      document.getElementById('tr-hours').onchange = renderTracks;
+      document.getElementById('tr-refresh').onclick = () => { logCache = null; renderTracks(); };
     }
 
-    function devMin(s) {
-      if (!s) return null;
-      const m = /(-?)(\d+):(\d+):(\d+)/.exec(String(s));
-      if (!m) return null;
-      return (m[1] ? -1 : 1) * ((+m[2]) * 3600 + (+m[3]) * 60 + (+m[4])) / 60;
+    // ── shared log loader (cached ~30s) ────────────────────────────────────────
+    async function loadLog() {
+      const now = Date.now();
+      if (logCache && now - logAt < 30000) return logCache;
+      const txt = await (await fetch('./data/vehicle-log.ndjson?_=' + now)).text();
+      const arr = [];
+      for (const ln of txt.split('\n')) { if (!ln) continue; try { arr.push(JSON.parse(ln)); } catch {} }
+      logCache = arr; logAt = now; return arr;
     }
 
-    // Read the reliability log and plot REALIZED deviation: for each recently
-    // departed trip, the deviation observed at/after its scheduled time (the truest
-    // "actual" the API allows, since it never reports a real departure time).
-    const tripIdOf = (t) => (t && typeof t === 'object') ? t.TripId : t;
-    async function pollReliability() {
-      let txt;
-      try { txt = await (await fetch('./data/reliability-log.ndjson?_=' + Date.now())).text(); }
-      catch { document.getElementById('beenote').textContent = '· no log file'; return; }
-      const now = Date.now(), byDep = new Map();
-      for (const ln of txt.trim().split('\n')) {
-        if (!ln) continue;
-        let r; try { r = JSON.parse(ln); } catch { continue; }
-        if (!r.sched || r.sched < now - 45*60000 || r.sched > now + 30*60000) continue;
-        const k = r.stop + '|' + tripIdOf(r.trip) + '|' + r.sched;
-        if (!byDep.has(k)) byDep.set(k, { sched: r.sched, route: String(r.route), rows: [] });
-        byDep.get(k).rows.push({ t: r.t, dev: devMin(r.dev) });
+    // route geometry helpers (for the string-line snap)
+    function routeFeatById(id) { return routesFinal && routesFinal.features.find(f => !f.properties.kind && String(f.properties.routeId) === id); }
+    function lineLen(c) { let L=0; for (let i=1;i<c.length;i++) L+=distM(c[i-1],c[i]); return L; }
+    function refLine(feat) {
+      const g = feat.geometry, pieces = g.type==='MultiLineString' ? g.coordinates : [g.coordinates];
+      let best=pieces[0], bl=-1; for (const p of pieces){ const L=lineLen(p); if(L>bl){bl=L;best=p;} } return best;
+    }
+    function makeSnap(line) {
+      const cum=[0]; for (let i=1;i<line.length;i++) cum[i]=cum[i-1]+distM(line[i-1],line[i]);
+      const total=cum[cum.length-1];
+      const snap=(p)=>{ const px=p[0]*COS,py=p[1]; let bd2=Infinity,bs=0;
+        for (let i=1;i<line.length;i++){ const a=line[i-1],b=line[i],ax=a[0]*COS,ay=a[1],bx=b[0]*COS,by=b[1];
+          const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t));
+          const ex=px-(ax+dx*t),ey=py-(ay+dy*t),d2=ex*ex+ey*ey; if(d2<bd2){bd2=d2; bs=cum[i-1]+t*distM(a,b);} }
+        return {s:bs,d2:bd2}; };
+      return {snap,total};
+    }
+
+    // ── STRING-LINE tab ─────────────────────────────────────────────────────────
+    const DIRC = ['#0066B3', '#ED1C24', '#43AD49', '#B41D8D'];
+    const hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    async function renderStringline() {
+      if (!routesFinal) return;
+      const note = document.getElementById('sl-note'); note.textContent = 'loading log...';
+      const id = document.getElementById('sl-route').value;
+      const hours = +document.getElementById('sl-hours').value;
+      const feat = routeFeatById(id); if (!feat) { note.textContent = 'no geometry'; return; }
+      const { snap, total } = makeSnap(refLine(feat));
+      const log = await loadLog();
+      const now = Date.now(), t0 = now - hours*3600000, SNAP2 = (150/MPD)**2;
+      const byTrip = new Map();
+      for (const r of log) {
+        if (String(r.routeId) !== id || r.fixTime < t0 || r.lat == null) continue;
+        const sn = snap([r.lon, r.lat]); if (sn.d2 > SNAP2) continue;
+        const k = String(r.tripId); if (!byTrip.has(k)) byTrip.set(k, { dir: r.dir||'?', pts: [] });
+        byTrip.get(k).pts.push([r.fixTime, sn.s]);
       }
-      const predicted = [], realized = [];
-      for (const dep of byDep.values()) {
-        if (dep.sched > now) {
-          // upcoming: its latest reading is the current PREDICTION
-          const latest = dep.rows.filter(x => x.dev != null).sort((a,b) => b.t - a.t)[0];
-          if (latest) predicted.push({ dev: latest.dev, route: dep.route });
-        } else {
-          // departed: latest reading at/after scheduled time = MEASURED deviation
-          const cand = dep.rows.filter(x => x.t >= dep.sched - 30000 && x.dev != null).sort((a,b) => b.t - a.t)[0];
-          if (cand) realized.push({ dev: cand.dev, route: dep.route });
-        }
-      }
-      const stat = (arr) => {
-        if (!arr.length) return { med: 0, late: 0 };
-        const d = arr.map(o => o.dev).sort((a,b) => a-b);
-        return { med: d[Math.floor(d.length/2)], late: Math.round(arr.filter(o => o.dev >= 1).length / arr.length * 100) };
-      };
-      const sp = stat(predicted), sr = stat(realized);
-      document.getElementById('beenote').textContent =
-        `· predicted ${predicted.length} (median ${sp.med.toFixed(1)} min, ${sp.late}% late) vs measured ${realized.length} (median ${sr.med.toFixed(1)} min, ${sr.late}% late)`;
-      renderBeeswarm({ predicted, realized });
+      const trips = [];
+      for (const tr of byTrip.values()) { tr.pts.sort((a,b)=>a[0]-b[0]);
+        const ss = tr.pts.map(p=>p[1]); if (tr.pts.length>=4 && (Math.max(...ss)-Math.min(...ss))>total*0.1) trips.push(tr); }
+      trips.sort((a,b)=>a.pts[0][0]-b.pts[0][0]);
+      drawMarey({ total, t0, t1: now, trips });
+      note.textContent = `${trips.length} trips · last ${hours}h · ref ${(total/1000).toFixed(1)} km`;
+    }
+    function drawMarey(d) {
+      const W=1000,H=540,padL=52,padR=18,padT=22,padB=32;
+      const x=t=>padL+(t-d.t0)/(d.t1-d.t0)*(W-padL-padR);
+      const y=s=>(H-padB)-(s/d.total)*(H-padB-padT);
+      const dirs=[...new Set(d.trips.map(t=>t.dir))], colOf=dir=>DIRC[dirs.indexOf(dir)%DIRC.length];
+      let g='';
+      for (let s=0;s<=d.total;s+=2000) g+=`<line x1="${padL}" y1="${y(s).toFixed(1)}" x2="${W-padR}" y2="${y(s).toFixed(1)}" stroke="#eee" stroke-width="0.5"/><text x="${padL-8}" y="${(y(s)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="#8a8a85">${s/1000} km</text>`;
+      const step=30*60000, first=Math.ceil(d.t0/step)*step;
+      for (let t=first;t<=d.t1;t+=step){ const major=new Date(t).getMinutes()===0;
+        g+=`<line x1="${x(t).toFixed(1)}" y1="${padT}" x2="${x(t).toFixed(1)}" y2="${H-padB}" stroke="${major?'#e2e2dc':'#f1f1ec'}" stroke-width="0.5"/>`;
+        if (major) g+=`<text x="${x(t).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="11" fill="#8a8a85">${hhmm(t)}</text>`; }
+      for (const tr of d.trips){ const pts=tr.pts.map(([t,s])=>`${x(t).toFixed(1)},${y(s).toFixed(1)}`).join(' ');
+        g+=`<polyline points="${pts}" fill="none" stroke="${colOf(tr.dir)}" stroke-width="1.4" opacity="0.8" stroke-linejoin="round"/>`; }
+      document.getElementById('sl-svg').innerHTML = g;
+      document.getElementById('sl-legend').innerHTML = dirs.map(dir=>`<span class="leg-item"><b style="border-color:${colOf(dir)}"></b>${dir}</span>`).join('');
     }
 
-    // Mirrored beeswarm: predicted (upcoming) above the axis, measured (departed)
-    // below, sharing one deviation scale so the prediction-vs-reality gap is visible.
-    function renderBeeswarm(d) {
-      const W = 1000, H = 280, padL = 16, padR = 16, MAXD = 15, cy = Math.round(H/2);
-      const x = v => padL + (Math.min(MAXD, Math.max(0, v)) / MAXD) * (W - padL - padR);
-      const swarm = (arr, dir) => {
-        const bins = {};
-        for (const o of arr) { const b = Math.round(o.dev / 0.5); (bins[b] = bins[b] || []).push(o); }
-        let s = '';
-        for (const b in bins) { const cx = x(b * 0.5);
-          bins[b].forEach((o, i) => { const yy = cy + dir * (9 + i * 5.2); if (yy < 16 || yy > H - 16) return;
-            s += `<circle cx="${cx.toFixed(1)}" cy="${yy.toFixed(1)}" r="2.6" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9"/>`; });
-        }
-        return s;
-      };
-      let ax = '';
-      [0,5,10,15].forEach(t => { const xx = x(t);
-        ax += `<line x1="${xx}" y1="16" x2="${xx}" y2="${H-16}" stroke="${t===0?'#bbb':'#eee'}" stroke-width="${t===0?1:0.5}"/>`+
-              `<text x="${xx}" y="${cy+4}" text-anchor="middle" font-size="11" fill="#8a8a85" style="paint-order:stroke;stroke:#fafafa;stroke-width:3px">${t===0?'on time':t+' min'}</text>`; });
-      const labs = `<text x="${padL}" y="16" font-size="11" fill="#8a8a85">↑ predicted (upcoming)</text>`+
-                   `<text x="${padL}" y="${H-6}" font-size="11" fill="#8a8a85">↓ measured (departed)</text>`;
-      const svg = document.getElementById('beeswarm');
-      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-      svg.innerHTML = ax + labs + swarm(d.predicted, -1) + swarm(d.realized, 1);
+    // ── TRACKS tab (raw accumulated trails) ─────────────────────────────────────
+    async function renderTracks() {
+      if (!proj) return;
+      const note = document.getElementById('tr-note'); note.textContent = 'loading log...';
+      const hours = +document.getElementById('tr-hours').value;
+      const log = await loadLog();
+      const t0 = hours >= 99 ? 0 : Date.now() - hours*3600000;
+      const byTrip = new Map();
+      for (const r of log) { if (r.fixTime < t0 || r.lat == null) continue;
+        const k = r.routeId+'|'+r.tripId; if (!byTrip.has(k)) byTrip.set(k, { route: String(r.routeId), pts: [] });
+        byTrip.get(k).pts.push([r.lon, r.lat]); }
+      let s = '';
+      for (const tr of byTrip.values()) { if (tr.pts.length < 2) continue;
+        const col = (routes[tr.route]||{}).color || '#888';
+        // break the trail at big jumps (layover / GPS gap) so they don't draw as
+        // long straight "spray" lines across the map
+        let d='', prev=null;
+        for (const p of tr.pts) { const [x,y]=proj(p[0],p[1]);
+          const cmd = (!prev || distM(prev, p) > 600) ? 'M' : 'L';
+          d += cmd + x.toFixed(1) + ',' + y.toFixed(1); prev = p; }
+        s += `<path d="${d}" fill="none" stroke="${col}" stroke-width="1" opacity="0.16"/>`; }
+      document.getElementById('tr-svg').innerHTML = s;
+      note.textContent = `${byTrip.size} trip tracks · ${log.length} points · ${hours>=99?'all':'last '+hours+'h'}`;
     }
 
-    function renderVisuals() {
-      if (proj) {
-        const g = document.getElementById('busdots');
-        if (g) g.innerHTML = fleet.map(b => {
-          const [x,y] = proj(b.lon, b.lat), col = (routes[b.route]||{}).color || '#888';
-          const late = b.status === 'LATE';
-          const halo = b.atStop ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="none" stroke="${col}" opacity="0.5"/>` : '';
-          return halo + `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="${late?'#c23b34':'#fff'}" stroke-width="${late?1.5:0.6}"/>`;
-        }).join('');
-        document.getElementById('mapnote').textContent = '· ' + fleet.length + ' buses';
-      }
-      const ot=fleet.filter(b=>b.status==='ONTIME').length, la=fleet.filter(b=>b.status==='LATE').length, ts=fleet.filter(b=>b.status==='TRIP START').length;
-      const other=fleet.length-ot-la-ts, tot=fleet.length||1;
-      const seg=(n,c)=> n ? `<div style="width:${(n/tot*100).toFixed(1)}%;background:${c};height:18px"></div>` : '';
-      document.getElementById('otbar').innerHTML =
-        `<div style="display:flex;border-radius:4px;overflow:hidden;border:0.5px solid var(--line)">`+
-        seg(ot,'#1d8f5e')+seg(la,'#c23b34')+seg(ts,'#9a9a85')+seg(other,'#d3d1c7')+`</div>`+
-        `<div class="d" style="margin-top:4px">on time ${ot} · late ${la} · starting ${ts}${other?' · other '+other:''}</div>`;
-      hist.push({ fleet: fleet.length, late: la, atStop: fleet.filter(b=>b.atStop).length });
-      if (hist.length > 80) hist.shift();
-      document.getElementById('sparks').innerHTML = [
-        ['fleet','#111', h=>h.fleet],
-        ['late','#c23b34', h=>h.late],
-        ['at stop','#1d8f5e', h=>h.atStop],
-      ].map(([lab,c,f]) => spark(lab, c, hist.map(f))).join('');
-    }
-
-    function nearestStop(c) {
-      let best = null;
-      for (const s of stops) { const d = distM(c, s.c); if (!best || d < best.d) best = { d, name: s.name }; }
-      return best;
-    }
-
+    // ── collectors ───────────────────────────────────────────────────────────
     async function pollLogs() {
       for (const L of LOGS) {
         try {
@@ -242,108 +284,101 @@
       }
       renderCollectors();
     }
-
     function fmtBytes(n) { if (n==null) return 'missing'; if (n<1024) return n+' B'; if (n<1e6) return (n/1024).toFixed(0)+' KB'; return (n/1e6).toFixed(2)+' MB'; }
-
     function renderCollectors() {
       const now = Date.now();
       document.getElementById('collectors').innerHTML = LOGS.map(L => {
         const st = logState[L.name] || {};
         const sinceGrow = st.lastGrow ? now - st.lastGrow : null;
         let cls = 'b', txt = 'no file';
-        if (st.size != null) {
-          if (sinceGrow == null) { cls='w'; txt='waiting'; }
-          else if (sinceGrow < L.fresh*1000) { cls='g'; txt='live'; }
-          else { cls='w'; txt='stale'; }
-        }
+        if (st.size != null) { if (sinceGrow == null) { cls='w'; txt='waiting'; } else if (sinceGrow < L.fresh*1000) { cls='g'; txt='live'; } else { cls='w'; txt='stale'; } }
         const grown = (st.base!=null && st.size!=null) ? '+'+fmtBytes(st.size-st.base)+' this session' : '';
-        return `<div class="card"><div class="k"><span class="dot ${cls}"></span>${L.name}</div>
-          <div class="v">${fmtBytes(st.size)}</div>
-          <div class="d">${txt}${sinceGrow!=null?' · grew '+ago(sinceGrow):''}<br>${grown}</div></div>`;
+        return `<div class="card"><div class="k"><span class="dot ${cls}"></span>${L.name}</div><div class="v">${fmtBytes(st.size)}</div><div class="d">${txt}${sinceGrow!=null?' · grew '+ago(sinceGrow):''}<br>${grown}</div></div>`;
       }).join('');
     }
 
-    const DROP = new Set(['DriverName','DriverFirstName','DriverLastName','DriverFareboxId','VehicleFareboxId','BlockFareboxId']);
+    // ── live fleet ─────────────────────────────────────────────────────────────
+    function nearestStop(c) { let best=null; for (const s of stops){ const d=distM(c,s.c); if(!best||d<best.d) best={d,name:s.name}; } return best; }
     let fleet = [];
-
     async function pollFleet() {
       const ids = Object.keys(routes).length ? Object.keys(routes).join(',') : '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,24,27,28,33,34,44,45,51,90,1000';
-      let v;
-      try { v = await (await fetch(`${REST}/Vehicles/GetAllVehiclesForRoutes?routeIDs=${ids}&_=${Date.now()}`)).json(); }
-      catch { return; }
-      const now = Date.now();
+      let v; try { v = await (await fetch(`${REST}/Vehicles/GetAllVehiclesForRoutes?routeIDs=${ids}&_=${Date.now()}`)).json(); } catch { return; }
       fleet = v.filter(b => b.Latitude != null).map(b => {
         const stopped = (b.Speed || 0) === 0;
-        let near = null;
-        if (stopped && stops.length) near = nearestStop([b.Longitude, b.Latitude]);
-        const atStop = !!(near && near.d <= AT_STOP_M);
-        return {
-          veh: b.Name, route: String(b.RouteId), dir: b.Direction, dest: b.Destination,
-          speed: b.Speed, heading: b.Heading, occ: b.OccupancyStatusReportLabel, status: b.OpStatus,
-          stopId: b.StopId, lastStop: b.LastStop, comm: b.CommStatus, gps: b.GPSStatus,
-          stopped, atStop, near, lat: b.Latitude, lon: b.Longitude,
-        };
+        const near = (stopped && stops.length) ? nearestStop([b.Longitude, b.Latitude]) : null;
+        return { veh: b.Name, route: String(b.RouteId), dir: b.Direction, dest: b.Destination, speed: b.Speed, heading: b.Heading,
+          occ: b.OccupancyStatusReportLabel, status: b.OpStatus, stopId: b.StopId, lastStop: b.LastStop, comm: b.CommStatus, gps: b.GPSStatus,
+          stopped, atStop: !!(near && near.d <= AT_STOP_M), near, lat: b.Latitude, lon: b.Longitude };
       });
       renderStats(); renderFleet(); renderVisuals();
       document.getElementById('fleetnote').textContent = '· ' + fleet.length + ' buses · updated ' + new Date().toLocaleTimeString();
     }
-
     function renderStats() {
-      const n = fleet.length;
-      const late = fleet.filter(b => b.status === 'LATE').length;
-      const ontime = fleet.filter(b => b.status === 'ONTIME').length;
-      const stopped = fleet.filter(b => b.stopped).length;
-      const atStop = fleet.filter(b => b.atStop).length;
-      const occActive = fleet.filter(b => b.occ && b.occ !== 'Empty').length;
-      const detoured = Object.values(routes).filter(r => r.det).length;
-      const cards = [
-        ['buses live', n, ''],
-        ['on time / late', ontime + ' / ' + late, late ? Math.round(late/n*100)+'% late' : 'all on time'],
-        ['stopped', stopped, atStop + ' at a stop, ' + (stopped-atStop) + ' elsewhere'],
-        ['occupancy &gt; empty', occActive, occActive ? '' : 'all read Empty'],
-        ['routes detoured', detoured + ' / ' + Object.keys(routes).length, 'from _DET_ trace'],
-      ];
-      document.getElementById('stats').innerHTML = cards.map(([k,v,d]) =>
-        `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d||'&nbsp;'}</div></div>`).join('');
+      const n=fleet.length, late=fleet.filter(b=>b.status==='LATE').length, ontime=fleet.filter(b=>b.status==='ONTIME').length;
+      const stopped=fleet.filter(b=>b.stopped).length, atStop=fleet.filter(b=>b.atStop).length;
+      const occActive=fleet.filter(b=>b.occ && b.occ!=='Empty').length, detoured=Object.values(routes).filter(r=>r.det).length;
+      const cards=[['buses live',n,''],['on time / late',ontime+' / '+late, late?Math.round(late/n*100)+'% late':'all on time'],
+        ['stopped',stopped,atStop+' at a stop, '+(stopped-atStop)+' elsewhere'],['occupancy &gt; empty',occActive,occActive?'':'all read Empty'],
+        ['routes detoured',detoured+' / '+Object.keys(routes).length,'from _DET_ trace']];
+      document.getElementById('stats').innerHTML = cards.map(([k,v,d])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d||'&nbsp;'}</div></div>`).join('');
     }
+    function renderVisuals() {
+      if (proj) { const g=document.getElementById('busdots');
+        if (g) g.innerHTML = fleet.map(b=>{ const [x,y]=proj(b.lon,b.lat), col=(routes[b.route]||{}).color||'#888', late=b.status==='LATE';
+          const halo=b.atStop?`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="none" stroke="${col}" opacity="0.5"/>`:'';
+          return halo+`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="${late?'#c23b34':'#fff'}" stroke-width="${late?1.5:0.6}"/>`; }).join('');
+        document.getElementById('mapnote').textContent='· '+fleet.length+' buses'; }
+      const ot=fleet.filter(b=>b.status==='ONTIME').length, la=fleet.filter(b=>b.status==='LATE').length, ts=fleet.filter(b=>b.status==='TRIP START').length;
+      const other=fleet.length-ot-la-ts, tot=fleet.length||1, seg=(n,c)=>n?`<div style="width:${(n/tot*100).toFixed(1)}%;background:${c};height:18px"></div>`:'';
+      document.getElementById('otbar').innerHTML=`<div style="display:flex;border-radius:4px;overflow:hidden;border:0.5px solid var(--line)">`+seg(ot,'#1d8f5e')+seg(la,'#c23b34')+seg(ts,'#9a9a85')+seg(other,'#d3d1c7')+`</div><div class="d" style="margin-top:4px">on time ${ot} · late ${la} · starting ${ts}${other?' · other '+other:''}</div>`;
+      hist.push({fleet:fleet.length,late:la,atStop:fleet.filter(b=>b.atStop).length}); if(hist.length>80)hist.shift();
+      document.getElementById('sparks').innerHTML=[['fleet','#111',h=>h.fleet],['late','#c23b34',h=>h.late],['at stop','#1d8f5e',h=>h.atStop]].map(([lab,c,f])=>spark(lab,c,hist.map(f))).join('');
+    }
+    function spark(label,color,vals){ const W=130,H=34,n=vals.length,max=Math.max(1,...vals),min=Math.min(0,...vals),rng=(max-min)||1;
+      const pts=vals.map((v,i)=>`${(i/Math.max(1,n-1)*W).toFixed(1)},${(H-((v-min)/rng)*(H-6)-3).toFixed(1)}`).join(' ');
+      return `<div><div class="k">${label}: <b style="color:var(--ink)">${vals.length?vals[vals.length-1]:'-'}</b></div><svg width="${W}" height="${H}" style="display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2"/></svg></div>`; }
 
-    const COLS = [
-      ['veh','veh'], ['route','rt'], ['dir','dir'], ['status','status'], ['speed','mph'],
-      ['heading','hdg'], ['occ','occupancy'], ['stopId','stopId'], ['state','state'], ['lastStop','last stop'], ['comm','comm'],
-    ];
+    const COLS=[['veh','veh'],['route','rt'],['dir','dir'],['status','status'],['speed','mph'],['heading','hdg'],['occ','occupancy'],['stopId','stopId'],['state','state'],['lastStop','last stop'],['comm','comm']];
     function renderFleet() {
-      const thead = document.querySelector('#fleet thead');
-      thead.innerHTML = '<tr>' + COLS.map(([k,l]) => `<th data-k="${k}">${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`).join('') + '</tr>';
-      thead.querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (sortKey===k) sortDir*=-1; else { sortKey=k; sortDir=1; } renderFleet(); });
-      const num = (x) => (x !== '' && x != null && !isNaN(x)) ? Number(x) : null;
-      const rows = [...fleet].sort((a,b) => {
-        let ka = sortKey==='state' ? (a.atStop?2:a.stopped?1:0) : a[sortKey];
-        let kb = sortKey==='state' ? (b.atStop?2:b.stopped?1:0) : b[sortKey];
-        const na = num(ka), nb = num(kb);            // sort numbers as numbers (route 2 before 10)
-        if (na != null && nb != null) return (na - nb) * sortDir;
-        return String(ka ?? '').localeCompare(String(kb ?? '')) * sortDir;
-      });
-      document.querySelector('#fleet tbody').innerHTML = rows.map(b => {
-        const col = (routes[b.route]||{}).color || '#888';
-        const state = b.atStop ? `<span class="atstop">at stop</span>` : b.stopped ? `stopped${b.near?' ('+Math.round(b.near.d)+'m)':''}` : 'moving';
-        return `<tr>
-          <td>${b.veh||''}</td>
-          <td class="swatch"><span style="background:${col}"></span>${b.route}</td>
-          <td>${b.dir||''}</td>
-          <td class="${b.status==='LATE'?'late':''}">${b.status||''}</td>
-          <td>${b.speed??''}</td>
-          <td>${b.heading??''}</td>
-          <td>${b.occ||''}</td>
-          <td>${b.stopId||''}</td>
-          <td>${state}</td>
-          <td class="muted">${b.lastStop||''}</td>
-          <td>${b.comm||''}</td>
-        </tr>`;
-      }).join('');
+      const thead=document.querySelector('#fleet thead');
+      thead.innerHTML='<tr>'+COLS.map(([k,l])=>`<th data-k="${k}">${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'</tr>';
+      thead.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k; if(sortKey===k)sortDir*=-1; else{sortKey=k;sortDir=1;} renderFleet();});
+      const num=(x)=>(x!==''&&x!=null&&!isNaN(x))?Number(x):null;
+      const rows=[...fleet].sort((a,b)=>{ let ka=sortKey==='state'?(a.atStop?2:a.stopped?1:0):a[sortKey], kb=sortKey==='state'?(b.atStop?2:b.stopped?1:0):b[sortKey];
+        const na=num(ka),nb=num(kb); if(na!=null&&nb!=null)return (na-nb)*sortDir; return String(ka??'').localeCompare(String(kb??''))*sortDir; });
+      document.querySelector('#fleet tbody').innerHTML=rows.map(b=>{ const col=(routes[b.route]||{}).color||'#888';
+        const state=b.atStop?`<span class="atstop">at stop</span>`:b.stopped?`stopped${b.near?' ('+Math.round(b.near.d)+'m)':''}`:'moving';
+        return `<tr><td>${b.veh||''}</td><td class="swatch"><span style="background:${col}"></span>${b.route}</td><td>${b.dir||''}</td><td class="${b.status==='LATE'?'late':''}">${b.status||''}</td><td>${b.speed??''}</td><td>${b.heading??''}</td><td>${b.occ||''}</td><td>${b.stopId||''}</td><td>${state}</td><td class="muted">${b.lastStop||''}</td><td>${b.comm||''}</td></tr>`; }).join('');
     }
 
-    function tickClock() { document.getElementById('clock').textContent = new Date().toLocaleString() + ' · polling fleet every 8s, logs every 5s'; }
+    // ── deviation beeswarm ───────────────────────────────────────────────────────
+    function devMin(s){ if(!s)return null; const m=/(-?)(\d+):(\d+):(\d+)/.exec(String(s)); if(!m)return null; return (m[1]?-1:1)*((+m[2])*3600+(+m[3])*60+(+m[4]))/60; }
+    const tripIdOf=(t)=>(t&&typeof t==='object')?t.TripId:t;
+    async function pollReliability() {
+      let txt; try { txt = await (await fetch('./data/reliability-log.ndjson?_=' + Date.now())).text(); } catch { document.getElementById('beenote').textContent='· no log file'; return; }
+      const now=Date.now(), byDep=new Map();
+      for (const ln of txt.trim().split('\n')) { if(!ln)continue; let r; try{r=JSON.parse(ln)}catch{continue}
+        if(!r.sched||r.sched<now-45*60000||r.sched>now+30*60000)continue;
+        const k=r.stop+'|'+tripIdOf(r.trip)+'|'+r.sched; if(!byDep.has(k))byDep.set(k,{sched:r.sched,route:String(r.route),rows:[]}); byDep.get(k).rows.push({t:r.t,dev:devMin(r.dev)}); }
+      const predicted=[], realized=[];
+      for (const dep of byDep.values()) { if (dep.sched>now){ const l=dep.rows.filter(x=>x.dev!=null).sort((a,b)=>b.t-a.t)[0]; if(l)predicted.push({dev:l.dev,route:dep.route}); }
+        else { const c=dep.rows.filter(x=>x.t>=dep.sched-30000&&x.dev!=null).sort((a,b)=>b.t-a.t)[0]; if(c)realized.push({dev:c.dev,route:dep.route}); } }
+      const stat=(arr)=>{ if(!arr.length)return{med:0,late:0}; const d=arr.map(o=>o.dev).sort((a,b)=>a-b); return {med:d[Math.floor(d.length/2)], late:Math.round(arr.filter(o=>o.dev>=1).length/arr.length*100)}; };
+      const sp=stat(predicted), sr=stat(realized);
+      document.getElementById('beenote').textContent=`· predicted ${predicted.length} (median ${sp.med.toFixed(1)} min, ${sp.late}% late) vs measured ${realized.length} (median ${sr.med.toFixed(1)} min, ${sr.late}% late)`;
+      renderBeeswarm({predicted,realized});
+    }
+    function renderBeeswarm(d) {
+      const W=1000,H=280,padL=16,padR=16,MAXD=15,cy=Math.round(H/2);
+      const x=v=>padL+(Math.min(MAXD,Math.max(0,v))/MAXD)*(W-padL-padR);
+      const swarm=(arr,dir)=>{ const bins={}; for(const o of arr){const b=Math.round(o.dev/0.5);(bins[b]=bins[b]||[]).push(o);} let s='';
+        for(const b in bins){ const cx=x(b*0.5); bins[b].forEach((o,i)=>{ const yy=cy+dir*(9+i*5.2); if(yy<16||yy>H-16)return; s+=`<circle cx="${cx.toFixed(1)}" cy="${yy.toFixed(1)}" r="2.6" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9"/>`; }); } return s; };
+      let ax=''; [0,5,10,15].forEach(t=>{ const xx=x(t); ax+=`<line x1="${xx}" y1="16" x2="${xx}" y2="${H-16}" stroke="${t===0?'#bbb':'#eee'}" stroke-width="${t===0?1:0.5}"/><text x="${xx}" y="${cy+4}" text-anchor="middle" font-size="11" fill="#8a8a85" style="paint-order:stroke;stroke:#fafafa;stroke-width:3px">${t===0?'on time':t+' min'}</text>`; });
+      const labs=`<text x="${padL}" y="16" font-size="11" fill="#8a8a85">↑ predicted (upcoming)</text><text x="${padL}" y="${H-6}" font-size="11" fill="#8a8a85">↓ measured (departed)</text>`;
+      const svg=document.getElementById('beeswarm'); svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.innerHTML=ax+labs+swarm(d.predicted,-1)+swarm(d.realized,1);
+    }
 
+    function tickClock() { document.getElementById('clock').textContent = new Date().toLocaleString() + ' · fleet 8s · logs 5s · beeswarm 15s'; }
     (async () => {
       tickClock(); setInterval(tickClock, 1000);
       await loadStatic();
@@ -351,6 +386,7 @@
       setInterval(pollLogs, 5000);
       setInterval(pollFleet, 8000);
       setInterval(pollReliability, 15000);
+      setInterval(() => { if (!document.getElementById('tab-tracks').hidden) renderTracks(); }, 30000);
     })();
   </script>
 </body>
