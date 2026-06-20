@@ -141,44 +141,58 @@
       for (const ln of txt.trim().split('\n')) {
         if (!ln) continue;
         let r; try { r = JSON.parse(ln); } catch { continue; }
-        if (!r.sched || r.sched < now - 45*60000 || r.sched > now + 5*60000) continue; // ~last 45 min
+        if (!r.sched || r.sched < now - 45*60000 || r.sched > now + 30*60000) continue;
         const k = r.stop + '|' + tripIdOf(r.trip) + '|' + r.sched;
         if (!byDep.has(k)) byDep.set(k, { sched: r.sched, route: String(r.route), rows: [] });
         byDep.get(k).rows.push({ t: r.t, dev: devMin(r.dev) });
       }
-      const realized = []; let departed = 0;
+      const predicted = [], realized = [];
       for (const dep of byDep.values()) {
-        if (dep.sched > now) continue;                 // not yet departed
-        departed++;
-        // the latest reading taken at/after scheduled time = the realized deviation
-        const cand = dep.rows.filter(x => x.t >= dep.sched - 30000 && x.dev != null).sort((a,b) => b.t - a.t)[0];
-        if (cand) realized.push({ dev: cand.dev, route: dep.route });
+        if (dep.sched > now) {
+          // upcoming: its latest reading is the current PREDICTION
+          const latest = dep.rows.filter(x => x.dev != null).sort((a,b) => b.t - a.t)[0];
+          if (latest) predicted.push({ dev: latest.dev, route: dep.route });
+        } else {
+          // departed: latest reading at/after scheduled time = MEASURED deviation
+          const cand = dep.rows.filter(x => x.t >= dep.sched - 30000 && x.dev != null).sort((a,b) => b.t - a.t)[0];
+          if (cand) realized.push({ dev: cand.dev, route: dep.route });
+        }
       }
-      const devs = realized.map(o => o.dev).sort((a, b) => a - b);
-      const med = devs.length ? devs[Math.floor(devs.length / 2)] : 0;
-      const late = realized.filter(o => o.dev >= 1).length;
+      const stat = (arr) => {
+        if (!arr.length) return { med: 0, late: 0 };
+        const d = arr.map(o => o.dev).sort((a,b) => a-b);
+        return { med: d[Math.floor(d.length/2)], late: Math.round(arr.filter(o => o.dev >= 1).length / arr.length * 100) };
+      };
+      const sp = stat(predicted), sr = stat(realized);
       document.getElementById('beenote').textContent =
-        `· ${realized.length} measured departures (last 45 min) · median ${med.toFixed(1)} min · ${realized.length ? Math.round(late/realized.length*100) : 0}% ≥1 min late · ${departed - realized.length} unmeasured`;
-      renderBeeswarm(realized);
+        `· predicted ${predicted.length} (median ${sp.med.toFixed(1)} min, ${sp.late}% late) vs measured ${realized.length} (median ${sr.med.toFixed(1)} min, ${sr.late}% late)`;
+      renderBeeswarm({ predicted, realized });
     }
 
-    function renderBeeswarm(obs) {
-      const W = 1000, H = 230, padL = 16, padR = 16, padB = 30, padT = 14, MAXD = 15;
-      const x = d => padL + (Math.min(MAXD, Math.max(0, d)) / MAXD) * (W - padL - padR);
-      const baseY = H - padB;
-      const bins = {};
-      for (const o of obs) { const b = Math.round(o.dev / 0.5); (bins[b] = bins[b] || []).push(o); }
-      let dots = '';
-      for (const b in bins) {
-        const arr = bins[b], cx = x(b * 0.5);
-        arr.forEach((o, i) => { const cy = baseY - 3 - i * 5.2; if (cy < padT) return;
-          dots += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.6" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9"/>`; });
-      }
+    // Mirrored beeswarm: predicted (upcoming) above the axis, measured (departed)
+    // below, sharing one deviation scale so the prediction-vs-reality gap is visible.
+    function renderBeeswarm(d) {
+      const W = 1000, H = 280, padL = 16, padR = 16, MAXD = 15, cy = Math.round(H/2);
+      const x = v => padL + (Math.min(MAXD, Math.max(0, v)) / MAXD) * (W - padL - padR);
+      const swarm = (arr, dir) => {
+        const bins = {};
+        for (const o of arr) { const b = Math.round(o.dev / 0.5); (bins[b] = bins[b] || []).push(o); }
+        let s = '';
+        for (const b in bins) { const cx = x(b * 0.5);
+          bins[b].forEach((o, i) => { const yy = cy + dir * (9 + i * 5.2); if (yy < 16 || yy > H - 16) return;
+            s += `<circle cx="${cx.toFixed(1)}" cy="${yy.toFixed(1)}" r="2.6" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9"/>`; });
+        }
+        return s;
+      };
       let ax = '';
       [0,5,10,15].forEach(t => { const xx = x(t);
-        ax += `<line x1="${xx}" y1="${padT}" x2="${xx}" y2="${baseY}" stroke="${t===0?'#bbb':'#eee'}" stroke-width="${t===0?1:0.5}"/>`+
-              `<text x="${xx}" y="${baseY+16}" text-anchor="middle" font-size="11" fill="#8a8a85">${t===0?'on time':t+' min'}</text>`; });
-      document.getElementById('beeswarm').innerHTML = ax + dots;
+        ax += `<line x1="${xx}" y1="16" x2="${xx}" y2="${H-16}" stroke="${t===0?'#bbb':'#eee'}" stroke-width="${t===0?1:0.5}"/>`+
+              `<text x="${xx}" y="${cy+4}" text-anchor="middle" font-size="11" fill="#8a8a85" style="paint-order:stroke;stroke:#fafafa;stroke-width:3px">${t===0?'on time':t+' min'}</text>`; });
+      const labs = `<text x="${padL}" y="16" font-size="11" fill="#8a8a85">↑ predicted (upcoming)</text>`+
+                   `<text x="${padL}" y="${H-6}" font-size="11" fill="#8a8a85">↓ measured (departed)</text>`;
+      const svg = document.getElementById('beeswarm');
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.innerHTML = ax + labs + swarm(d.predicted, -1) + swarm(d.realized, 1);
     }
 
     function renderVisuals() {

@@ -328,7 +328,11 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     late, vs predicted median 0 / 27% - buses run later than far-out predictions imply. CAVEAT
     (selection bias): on-time buses depart at sched and drop off fast, late buses LINGER, so the set we
     can measure at departure skews late - the ~80% is inflated and coverage is low (most departures
-    unmeasured). Improves as re-poll data accumulates; "split predicted vs actual" is the next step.
+    unmeasured). Improves as re-poll data accumulates. [DONE] The beeswarm now SPLITS predicted vs
+    measured as a mirrored swarm (predicted-upcoming above the axis, measured-departed below, shared
+    deviation scale): the gap is plainly visible - predicted piles at on-time, measured pushes right
+    into 5-10 min. Predicted ~244 (median 0, ~32% late) vs measured ~51 (median 3.3, ~84% late; biased
+    late + sparse, per the caveat).
   - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
     occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
     ride on the Vehicles `occ` field (pending: is it ever non-zero?).
