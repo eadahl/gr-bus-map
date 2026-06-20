@@ -193,19 +193,41 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
         detect-corridors, spike-division, diag-junctions. KEPT: lib-corridors.mjs (match-routes
         imports it), spread-routes.mjs (makes the editor's pre-spread starting geometry).
         Live HTML now: index.html (deployed), editor.html, polish-preview.html.
-- [x] **2. Live buses (DONE, verified locally 2026-06-19, NOT yet pushed).** `rapid.js`
-      wired into index.html (the inline script is now `type="module"` so it can `import
-      { pollVehicles }`). One GetAllVehiclesForRoutes call per sweep for the 25 drawn route
-      IDs: the multi-route `routeIDs=a,b,c` param is confirmed working (one 200 per poll,
+- [x] **2. Live buses (DONE + deployed 2026-06-19, commit b4a1e31; pinning follow-up after).**
+      `rapid.js` wired into index.html (the inline script is now `type="module"` so it can
+      `import { pollVehicles }`). One GetAllVehiclesForRoutes call per sweep for the 25 drawn
+      route IDs: the multi-route `routeIDs=a,b,c` param is confirmed working (one 200 per poll,
       every 10s, CORS open, no proxy). Each bus is a circle in a new `vehicles` source/layer,
       colored by route (`colorById`, keyed by String(routeId) read from routes-final.geojson;
       unknown route -> quiet grey `#555`), white casing, added with no beforeId so the dots sit
       ABOVE everything incl. labels (the buses are the point). A bus inside the hub black box is
       dropped via ray-cast `pointInRing` against the hubzone polygon: it reads as "at the hub"
       (the station marker), not a fake exact spot. colorById + the hub ring are both read from
-      the same routes-final.geojson the map draws (one source of truth). Verified in the browser
-      preview: 39 live buses plotted as colored dots, index.html's own layers throw no errors.
-      NEXT: commit + push to deploy. Then rung 3 makes them glide between polls.
+      the same routes-final.geojson the map draws (one source of truth).
+      - **PINNED TO ROUTES (the important follow-up, 2026-06-19).** First cut plotted buses at raw
+        GPS and they floated OFF the ribbons: the drawn lines are NOT raw GPS (map-matched to OSM
+        roads, merged, spread into parallel lanes, smoothed, even-spaced), so true GPS never lands
+        on the displayed line. Fix: snap each bus to the nearest point on ITS OWN route's drawn
+        geometry (`geomById` per routeId, read from routes-final; `snapToPaths` /
+        `nearestOnSegment`, nearest-point in a cos(lat)-scaled planar space). Now the dot always
+        rides the line. (Nearest-point, not sequence/direction-aware: that is a rung-3 refinement
+        for smooth motion. Good enough and kills the floating dots.) Verified vs live feed: median
+        snap shift ~7 m (the spread offset), ~85% of buses within 25 m.
+      - **OFF-ROUTE = ANOMALY (Erik's call).** The drawn lines come from one representative trip
+        (hand-edited, polished, hub-clipped), so they do NOT cover every branch / full extent. A
+        live bus on uncovered track snaps far (a route 24 bus to Target-Rivertown was 1163 m off;
+        the drawn line doesn't reach that branch). Erik's model: pinned = primary/trusted/accurate,
+        but a bus genuinely off its regular route should still be SHOWN, visibly flagged as an
+        anomaly, not silently dropped or fake-pinned. So: within `SNAP_MAX_M` (80 m) of the line ->
+        pin (solid route-colored dot, trusted); farther (or no drawn line at all) -> plot at TRUE
+        GPS with `anomaly:true`, drawn as a HOLLOW route-colored ring (near-white fill, thicker
+        colored stroke) so it reads as approximate / off the standard route. Data-driven via a
+        `case` on the `anomaly` prop in the vehicles-layer paint. The far snaps are a GEOMETRY-
+        COVERAGE gap (drawn lines miss some branches), a separate later fix in the match/polish
+        pipeline; the rendering is done.
+      Verified in the browser preview: one poll = 25 pinned solid dots on their ribbons + 3
+      hollow-ring anomalies at true GPS + 1 dropped at hub; no errors from index.html's own layers.
+      Then rung 3 makes them glide between polls.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.

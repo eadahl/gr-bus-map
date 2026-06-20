@@ -192,10 +192,19 @@
         type: 'circle',
         source: 'vehicles',
         paint: {
-          'circle-color': ['get', 'color'],
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 5, 18, 9],
-          'circle-stroke-color': '#fff',
-          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 1.5, 18, 2],
+          // Normal (pinned, trusted): solid route-colored dot with a white casing.
+          // Anomaly (off route, approximate): hollow ring (near-white fill, route-
+          // colored stroke, a touch thicker) so it reads as not-locked-to-the-line.
+          'circle-color': ['case', ['get', 'anomaly'], '#fafafa', ['get', 'color']],
+          'circle-stroke-color': ['case', ['get', 'anomaly'], ['get', 'color'], '#ffffff'],
+          // One zoom interpolate (MapLibre forbids two in an expression); the
+          // anomaly ring is a touch thicker at each stop.
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'],
+            10, ['case', ['get', 'anomaly'], 1.5, 1],
+            14, ['case', ['get', 'anomaly'], 2.5, 1.5],
+            18, ['case', ['get', 'anomaly'], 3.5, 2],
+          ],
         },
       });
 
@@ -235,10 +244,59 @@
     }, 300);
 
     // ── Live buses (rung 2) ─────────────────────────────────────────────────
-    // routeId (string) -> route color, and the hub-zone ring, both read from the
-    // same routes-final.geojson the map draws so there is one source of truth.
+    // All three read from the same routes-final.geojson the map draws, so there
+    // is one source of truth: routeId -> color, routeId -> the route's drawn
+    // line(s) (an array of coordinate paths), and the hub-zone ring.
     const colorById = {};
+    const geomById = {};
     let hubRing = null;
+
+    // The route lines on screen are NOT raw GPS: they are map-matched to OSM
+    // roads, merged, spread into parallel lanes, smoothed, and even-spaced. So a
+    // bus's true GPS position never lands on its displayed ribbon. We PIN each bus
+    // to its own route's drawn geometry: snap the GPS point to the nearest point
+    // on that route's line so the dot always rides the colored line. (Direction-
+    // aware, sequence-following placement is a rung-3 refinement for smooth motion;
+    // nearest-point is the right first step and kills the floating dots.)
+
+    // Local planar scale so longitude and latitude compare in even units near GR.
+    const COS_LAT = Math.cos((42.96 * Math.PI) / 180);
+
+    // Nearest point on segment a->b to p, all [lng, lat]. Returns the snapped
+    // [lng, lat] (interpolated on the ORIGINAL coords) and the squared distance,
+    // both computed in the scaled planar space.
+    function nearestOnSegment(p, a, b) {
+      const px = p[0] * COS_LAT, py = p[1];
+      const ax = a[0] * COS_LAT, ay = a[1];
+      const bx = b[0] * COS_LAT, by = b[1];
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const point = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      const ex = px - (ax + dx * t), ey = py - (ay + dy * t);
+      return { point, dist2: ex * ex + ey * ey };
+    }
+
+    // Snap p onto the nearest point across all of a route's paths. Returns the
+    // best { point, dist2 } (dist2 in scaled planar units), or null if no paths.
+    function snapToPaths(p, paths) {
+      let best = null;
+      for (const path of paths) {
+        for (let i = 1; i < path.length; i++) {
+          const r = nearestOnSegment(p, path[i - 1], path[i]);
+          if (!best || r.dist2 < best.dist2) best = r;
+        }
+      }
+      return best;
+    }
+
+    // A bus farther than this from its drawn line is treated as off its regular
+    // route: we do NOT pin it (that would be a lie), we plot it at its true GPS
+    // and mark it as an anomaly. On-route spread/smoothing offsets stay well under
+    // this; the off-route cases observed sit at 140 m and beyond.
+    const SNAP_MAX_M = 80;
+    const M_PER_DEG = 111320; // meters per degree, good enough at this latitude
 
     // Ray-casting point-in-polygon. pt and ring vertices are [lng, lat].
     function pointInRing(pt, ring) {
@@ -254,21 +312,31 @@
       return inside;
     }
 
-    // Turn a poll's worth of vehicles into dot features. A bus inside the hub
-    // black box is dropped: it reads as "at the hub" (the station marker), not a
-    // fake exact position. Color comes from the route; an unknown route (one we
-    // don't draw) falls back to a quiet grey rather than vanishing.
+    // Turn a poll's worth of vehicles into dot features.
+    //  - At the hub (raw GPS inside the black box): dropped, reads as "at the hub".
+    //  - On its route (within SNAP_MAX_M of the drawn line): PINNED to the line
+    //    (snapped) and drawn as a solid colored dot. The trusted, normal case.
+    //  - Off its route (farther than SNAP_MAX_M, or no line at all): plotted at its
+    //    TRUE GPS and flagged anomaly:true, drawn as a hollow ring. We show it but
+    //    visibly mark it as off the standard route rather than faking a pin.
     function renderVehicles(vehicles) {
       const src = map && map.getSource && map.getSource('vehicles');
       if (!src) return; // layer not built yet; the next poll (10s) will land
       const features = [];
       for (const v of vehicles) {
         if (v.lat == null || v.lon == null) continue;
-        if (pointInRing([v.lon, v.lat], hubRing)) continue;
+        const raw = [v.lon, v.lat];
+        if (pointInRing(raw, hubRing)) continue; // physically at the hub
+        const id = String(v.routeId);
+        const color = colorById[id] || '#555';
+        const paths = geomById[id];
+        const best = paths && paths.length ? snapToPaths(raw, paths) : null;
+        const distM = best ? Math.sqrt(best.dist2) * M_PER_DEG : Infinity;
+        const onRoute = best && distM <= SNAP_MAX_M;
         features.push({
           type: 'Feature',
-          geometry: { type: 'Point', coordinates: [v.lon, v.lat] },
-          properties: { color: colorById[String(v.routeId)] || '#555', route: String(v.routeId) },
+          geometry: { type: 'Point', coordinates: onRoute ? best.point : raw },
+          properties: { color, route: id, anomaly: !onRoute },
         });
       }
       src.setData({ type: 'FeatureCollection', features });
@@ -287,7 +355,12 @@
       for (const f of meta.features) {
         if (f.properties.kind === 'hubzone') { hubRing = f.geometry.coordinates[0]; continue; }
         if (f.properties.kind) continue;
-        colorById[String(f.properties.routeId)] = f.properties.color;
+        const id = String(f.properties.routeId);
+        colorById[id] = f.properties.color;
+        // Normalize LineString / MultiLineString to an array of coordinate paths,
+        // the form snapToPaths expects.
+        const g = f.geometry;
+        geomById[id] = g.type === 'MultiLineString' ? g.coordinates : [g.coordinates];
       }
       const ids = Object.keys(colorById);
       if (!ids.length) return;
