@@ -342,6 +342,13 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     stopped buses split into AT-A-STOP vs elsewhere (speed~0 within 40 m of a GetAllStops location).
     Early reads: ~17 of 18 stopped buses are at a designated stop (the at-stop inference is clean), and
     occupancy reads all-Empty so far (likely not live - watch over peak before building crowding).
+  - STRING-LINE (Marey): `scripts/build-stringline.mjs [routeId] [--hours N]` reads the GPS log +
+    routes-final, snaps each point to the route's reference line for distance-along, and writes
+    data/stringline.json (gitignored, per-trip time/distance series); `stringline.html` renders it
+    (x=time, y=distance, lines by direction). Slope=speed, flat=dwell/layover, converging same-color
+    lines=bunching, gaps=service holes. Auto-picks the busiest route if none given. Route 90 (Silver
+    Line) over 5h shows clean regular ~headway service with terminal layovers; rebuild per route to
+    hunt bunching/irregularity.
 - [x] **3. Calm motion (DONE + deployed 2026-06-20).** index.html glides each bus from its last
       drawn position to its new (snapped/pinned) target over the poll interval via requestAnimationFrame
       (`anim` map keyed per vehicle, `lerp`/`curPos`, GLIDE_MS=10000). Draws on every poll too, not

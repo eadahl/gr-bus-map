@@ -50,3 +50,6 @@ data/detour-traces/
 
 # Reliability sampler log (schedule-vs-actual from StopDepartures).
 data/reliability-log.ndjson
+
+# String-line (Marey) dataset from scripts/build-stringline.mjs (regenerable).
+data/stringline.json
