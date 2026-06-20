@@ -25,7 +25,7 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       `data/routes.geojson` (one representative line per route+direction, real
       colors). Map draws white casing + colored line, rounded joins, inserted
       above roads/buildings and below labels.
-- [ ] **1.5 Disambiguation (IN PROGRESS, the hard part).** Casing alone does NOT
+- [x] **1.5 Disambiguation (DONE, deployed 2026-06-19, the hard part).** Casing alone does NOT
       fix routes sharing the same centerline (the downtown knot): the top line
       hides the rest. This supersedes HANDOFF.md's claim that casing is "the
       single technique" for bundled legibility. Solution: NYC-style parallel
@@ -72,7 +72,7 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
            `data/routes-matched-spread-debug.geojson`. Clean parallel ribbons on the
            grid corridors (hub taper still applies). View `match-spread-preview.html`
            (stacked vs spread toggle). This is the current latest view.
-        3. [IN PROGRESS] Junction + corridor cleanup. AGREED BAR with Erik
+        3. [DONE] Junction + corridor cleanup. AGREED BAR with Erik
            (2026-06-19): on a shared corridor, routes on the same street collapse to
            ONE clean centerline (stacked = a single line per shared segment) and the
            spread fans them into stable, non-crossing lanes. No sawtooth on
@@ -126,7 +126,7 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
                COMMITTED (the "human disposes" half); each feature's routeId replaces the
                algorithm line for that route. Erik hand-cleans the hub, junctions, and any
                residual wobble. (Applying overrides into the deployed build is step 4.)
-        4. [IN PROGRESS] Hand-finish, then a polish pass, then bake. AGREED DIVISION OF
+        4. [DONE] Hand-finish, polish pass, and bake (deployed). AGREED DIVISION OF
            LABOR (2026-06-19): Erik hand-edits the STRUCTURE in editor.html (which road,
            the order of routes across a bundle, how routes relate, hub untangling); the
            ALGORITHM then does the finish in scripts/polish-routes.mjs. Sequence:
@@ -141,15 +141,15 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
                 from his positions (sorted signed offset), continuous per-line perpendicular
                 so near-N/S corridors like Monroe do NOT wobble, heavy shift-smoothing,
                 hub taper. [DONE, works well]
-              - HUB: collapse routes within 150 m of Rapid Central Station to a clean node
-                + station marker. [DONE, first cut: south spokes clean, north side fans
-                into a busy starburst where through-routes cross; radius/approach tunable]
-              Output data/routes-polished-debug.geojson (gitignored). View polish-preview.html
-              (toggle input vs polished). Run: node scripts/polish-routes.mjs.
-           b. [NEXT] Bake: point index.html at the polished geometry (commit it as the
-              static file the deployed map draws, draw the station marker, retire the raw
-              routes.geojson draw), then push to deploy. Optional further tuning of the hub
-              starburst and even-spacing first (Erik will fine-tune).
+              - HUB: BLACK BOX (revised from the node/spokes idea, which starbursted). Clip
+                routes at a vertical rounded-rect zone (baked center [-85.67302, 42.95863],
+                222x435 m) and draw the zone + station marker. Hand-positioned by Erik via the
+                draggable box in polish-preview.html. [DONE]
+              Output data/routes-final.geojson (COMMITTED). View polish-preview.html (toggle
+              input vs polished; drag the hub box). Run: node scripts/polish-routes.mjs.
+           b. [DONE] Baked + deployed: index.html draws data/routes-final.geojson (routes +
+              hubzone fill/outline + station marker; route-drawing made robust to a slow
+              basemap). Raw routes.geojson draw retired. Live at gr-bus-map.netlify.app.
            HUB APPROACH (decided with Erik 2026-06-19, REVISED to a black box): the hub
            knot (~19 routes converging downtown) is too messy to show truthfully. First we
            tried collapsing to a station NODE with spokes - the north side fanned into an
@@ -174,17 +174,29 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
              median, couplet legs, and gaps where the match dropped at transit-center
              loops / layovers / parking). Pieces are disconnected and their joins are
              implicit. Pass should stitch them into continuous lines.
-      - Pipeline now (regenerate, all gitignored debug outputs):
-          node scripts/match-routes.mjs      # corridors + Viterbi + direction merge + roundabouts
-          node scripts/spread-routes.mjs data/routes-merged-debug.geojson data/routes-merged-spread-debug.geojson
-        View routes-merged-spread-debug.geojson; hand-edit in editor.html -> route-overrides.geojson.
-      - Debug pages have proliferated (`debug-corridors`, `spread-preview`,
-        `spike-division`, `match-preview`, `match-spread-preview`); the first two
-        are on the superseded noisy-GPS basis and can be pruned. The live editor is
-        `editor.html`; the deployed map is still `index.html` (raw routes, untouched).
-      - To resume: "continue the road-matching build" (next: rung-1.5 step 4, apply
-        hand-overrides and bake the merged+spread geometry into the deployed map).
-- [ ] **2. Live buses.** Wire in `rapid.js`. Dots that update.
+      - PIPELINE (source -> deployed geometry):
+          node scripts/match-routes.mjs   # GTFS routes.geojson -> OSM corridors (name-merge +
+                                          # Viterbi) + direction merge + roundabouts. Needs
+                                          # osm-src/roads.json (Overpass, gitignored).
+          (hand-finish in editor.html -> data/route-overrides.geojson, COMMITTED, 25 routes)
+          node scripts/polish-routes.mjs  # overrides -> stitch + smooth + even-spacing + hub
+                                          # black box -> data/routes-final.geojson (COMMITTED,
+                                          # what index.html draws). NOCLIP=1 reopens the hub box.
+        Preview the pass with polish-preview.html (input vs polished; drag the hub box, read the
+        readout, then bake its center/size into polish-routes.mjs). Re-run polish-routes.mjs
+        after any override edit, commit routes-final.geojson, push to deploy.
+      - PARKED refinements (not blocking, Erik's call later): residual tangle just NW of the
+        hub box (river crossing) + crisp ~5 entry gates; residual double-tracks vs real one-way
+        couplets; even-spacing / smoothing fine-tune; hub box styling (quiet grey placeholder).
+      - Superseded debug pages/scripts safe to prune: debug-corridors, spread-preview,
+        spike-division, match-preview, match-spread-preview; scripts detect-corridors,
+        spike-division, diag-junctions.
+- [ ] **2. Live buses (NEXT, the point of the map).** Wire `rapid.js` (committed, ready:
+      `fetchVehicles`/`fetchRoutes`/`fetchAllVehicles`/`pollVehicles`; already strips DriverName)
+      into index.html. Live dots from GetAllVehiclesForRoutes (CORS open, call direct from the
+      browser, NO proxy / Netlify Functions - see Data layer below). Color each dot by its route
+      color. A bus whose position falls inside the hub black box should read as "at the hub" (do
+      not plot its exact spot). Then rung 3 makes them glide between polls.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
