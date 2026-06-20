@@ -25,10 +25,18 @@ can decide what to build. Probed 2026-06-20 against the production host.
 - Per vehicle: `VehicleId, RouteId, TripId, RunId, Name` (coach #), `Latitude,
   Longitude, Heading, Speed, Destination, DirectionLong, LastStop, StopId,
   OpStatus, Deviation, CommStatus, GPSStatus, LastUpdated`.
-- **Notable beyond position:** `Deviation` (schedule deviation, minutes),
-  `OccupancyStatus` / `OnBoard` / `SeatingCapacity` / `TotalCapacity` (crowding /
-  ridership), `TripId` + `RunId` (stitch a run / block), `OpStatus` (ONTIME/LATE),
-  `GPSStatus` + `CommStatus` (data trust).
+- **Notable beyond position (live-checked 2026-06-20):**
+  - `OpStatus` = ONTIME / LATE / TRIP START. This is the ONLY on-time signal in the
+    vehicle feed: **`Deviation` is null here** (numeric minutes-late live in
+    StopDepartures `Dev`). `DisplayStatus`, `CurrentStatus` are also null.
+  - `OccupancyStatus` = a 0..6 bucket (Empty / Many seats / Few seats / Standing /
+    Crushed / Full / Not accepting). **`OnBoard` (actual count) is null** - no
+    headcount. At the probe, every bus read 0/Empty: unknown yet whether occupancy
+    is genuinely live or always 0 (the collector now logs it to find out).
+  - `SeatingCapacity` / `TotalCapacity` populated per vehicle (e.g. 38/77, 57/114)
+    = the bus SIZE CLASS, not live load.
+  - `StopId` (stop at/approaching, 0 = between), `TripId` + `RunId` (stitch a run /
+    block), `GPSStatus` + `CommStatus` (data trust).
 
 ### Routes (catalog + topology + embedded live)
 - `GET /Routes/GetVisibleRoutes` — the 25 public routes.
@@ -98,9 +106,9 @@ StopDepartures (live) or the committed static GTFS in `gtfs-src/`.
 | --- | --- | --- |
 | Live position, heading, speed | Vehicles | the map (have it) |
 | `TripId` / `RunId` | Vehicles, StopDepartures | stitch runs into paths (reconstructor) |
-| `Deviation` / `OpStatus` | Vehicles | cheap per-bus on-time signal |
+| `OpStatus` (ONTIME/LATE) | Vehicles | coarse per-bus on-time (Deviation is null here) |
 | `SDT/EDT/STA/ETA` + `ADT/ATA` | StopDepartures | precise schedule-vs-actual per stop |
-| `OccupancyStatus` / `OnBoard` / capacity | Vehicles | crowding / ridership |
+| `OccupancyStatus` (0..6 bucket) + capacity | Vehicles | crowding bucket + size class (OnBoard count is null) |
 | Official ordered stops | RouteStops + Stops | topology, stop sequence |
 | Official route geometry | KML traces | a candidate base geometry |
 | Detour active? + rerouted geometry | KML `_DET_` filename, PublicMessages | exclude/label detours |

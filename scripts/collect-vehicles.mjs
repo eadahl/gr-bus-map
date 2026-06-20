@@ -77,9 +77,13 @@ async function tick() {
   for (const v of data) {
     if (v.Latitude == null || v.Longitude == null) continue;
     const key = `${v.VehicleId}`;
-    const posKey = `${v.TripId}|${v.Latitude},${v.Longitude}`;
-    if (lastPos.get(key) === posKey) continue; // hasn't moved since last log
-    lastPos.set(key, posKey);
+    // Log when the bus MOVES or when a meaningful state changes (occupancy,
+    // on-time status, the stop it's at, or comms going stale) - so we capture
+    // delay accruing and crowding shifts even while a bus sits still, without
+    // logging an idle bus that hasn't changed at all.
+    const stateKey = `${v.TripId}|${v.Latitude},${v.Longitude}|${v.OccupancyStatus}|${v.OpStatus}|${v.StopId}|${v.CommStatus}`;
+    if (lastPos.get(key) === stateKey) continue;
+    lastPos.set(key, stateKey);
 
     // Strict allowlist. Driver/farebox fields are deliberately never copied.
     lines.push(JSON.stringify({
@@ -94,7 +98,13 @@ async function tick() {
       lon: v.Longitude,
       heading: v.Heading,
       speed: v.Speed,
-      status: v.OpStatus,
+      status: v.OpStatus,                  // ONTIME / LATE / TRIP START (categorical; Deviation is null in this feed)
+      occ: v.OccupancyStatus,              // 0..6 GTFS-RT occupancy bucket (Empty..Full); OnBoard count is null
+      seats: v.SeatingCapacity,            // per-vehicle; with totalCap = the bus size class
+      totalCap: v.TotalCapacity,
+      stopId: v.StopId,                    // stop at/approaching (0 = between stops); ties a fix to a stop
+      comm: v.CommStatus,                  // GOOD = live; otherwise stale position
+      gps: v.GPSStatus,                    // fix quality
     }));
   }
 

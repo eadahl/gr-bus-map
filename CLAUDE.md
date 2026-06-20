@@ -244,9 +244,14 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     25 drawn routes every ~12s and appends each NEW position (dedup by vehicle+trip+latlon) to
     `data/vehicle-log.ndjson` (GITIGNORED; we commit only derived geometry). Strict field ALLOWLIST,
     so DriverName/farebox are never logged (verified: 0 leaks). Captures `tripId` (stitch one run),
-    `dir`, `dest` (names the branch), lat/lon/heading/speed/fixTime. Run it over time (a full
-    service week is ideal): `node scripts/collect-vehicles.mjs`. Append-only, Ctrl-C is clean,
-    safe to stop/resume.
+    `dir`, `dest` (names the branch), lat/lon/heading/speed/fixTime, plus (added 2026-06-20)
+    `status` (OpStatus ONTIME/LATE), `occ` (OccupancyStatus 0..6 bucket; OnBoard count is null so
+    no headcount), `seats`/`totalCap` (vehicle size class), `stopId`, `comm`/`gps` (data trust).
+    Dedup now triggers on a MOVE or a state change (occupancy/status/stop/comm), so delay accrual
+    and crowding shifts are captured even while a bus sits still. NOTE: at first probe every bus
+    read occ=0/Empty - logging will reveal whether occupancy is a live signal or always 0. Run it
+    over time (a full service week is ideal): `node scripts/collect-vehicles.mjs`. Append-only,
+    Ctrl-C is clean, safe to stop/resume.
   - [DONE] STEP 1b: coverage-gap finder (the cheap feedback loop). `scripts/find-coverage-gaps.mjs`
     reads the log + routes-final.geojson, snaps each logged position to its route's line with the
     SAME pin math + hub-zone exclusion the map uses, flags positions >80 m off (a coverage gap),
