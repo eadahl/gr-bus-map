@@ -41,7 +41,13 @@
   <div id="map"></div>
   <button id="labels-toggle" type="button">labels: on</button>
 
-  <script>
+  <script type="module">
+    // rapid.js: the committed fetch/normalize/poll layer for The Rapid's live
+    // vehicle feed. pollVehicles(ids, onUpdate, opts) chains setTimeout so a slow
+    // response never stacks, and its default fetcher requests all the given route
+    // IDs in one GetAllVehiclesForRoutes call (CORS open, no proxy).
+    import { pollVehicles } from './rapid.js';
+
     // Carto Positron: a near-white, low-contrast basemap served from CARTO's
     // public CDN. Usable without an API key. This is the labeled variant: it
     // carries place, water, and major-road names to orient the viewer.
@@ -176,6 +182,23 @@
         paint: { 'circle-radius': 5, 'circle-color': '#fff', 'circle-stroke-color': '#111', 'circle-stroke-width': 2 },
       }, firstLabel);
 
+      // Live buses. The source starts empty and is fed by the poller (see below);
+      // each bus is a colored dot in its route's color with a white casing so it
+      // reads on top of the route lines. Added with no beforeId so the dots sit
+      // ABOVE everything, labels included: the buses are the point of the map.
+      map.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'vehicles',
+        type: 'circle',
+        source: 'vehicles',
+        paint: {
+          'circle-color': ['get', 'color'],
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 5, 18, 9],
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 1.5, 18, 2],
+        },
+      });
+
       // Restore the current label choice (matters after a rebuild onto bare ground).
       setLabels(labelsOn);
     }
@@ -210,6 +233,70 @@
       addRoutes();
       if (map.getSource('routes')) { clearInterval(styleWatch); clearTimeout(watchdog); }
     }, 300);
+
+    // ── Live buses (rung 2) ─────────────────────────────────────────────────
+    // routeId (string) -> route color, and the hub-zone ring, both read from the
+    // same routes-final.geojson the map draws so there is one source of truth.
+    const colorById = {};
+    let hubRing = null;
+
+    // Ray-casting point-in-polygon. pt and ring vertices are [lng, lat].
+    function pointInRing(pt, ring) {
+      if (!ring) return false;
+      const [x, y] = pt;
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+        const hit = (yi > y) !== (yj > y) &&
+          x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+        if (hit) inside = !inside;
+      }
+      return inside;
+    }
+
+    // Turn a poll's worth of vehicles into dot features. A bus inside the hub
+    // black box is dropped: it reads as "at the hub" (the station marker), not a
+    // fake exact position. Color comes from the route; an unknown route (one we
+    // don't draw) falls back to a quiet grey rather than vanishing.
+    function renderVehicles(vehicles) {
+      const src = map && map.getSource && map.getSource('vehicles');
+      if (!src) return; // layer not built yet; the next poll (10s) will land
+      const features = [];
+      for (const v of vehicles) {
+        if (v.lat == null || v.lon == null) continue;
+        if (pointInRing([v.lon, v.lat], hubRing)) continue;
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [v.lon, v.lat] },
+          properties: { color: colorById[String(v.routeId)] || '#555', route: String(v.routeId) },
+        });
+      }
+      src.setData({ type: 'FeatureCollection', features });
+    }
+
+    // Build the color/hub lookups from the drawn geometry, then poll those exact
+    // route IDs. One GetAllVehiclesForRoutes call per sweep, every 10s.
+    async function initBuses() {
+      let meta;
+      try {
+        meta = await (await fetch('./data/routes-final.geojson')).json();
+      } catch (e) {
+        console.warn('bus init: could not load route metadata', e);
+        return;
+      }
+      for (const f of meta.features) {
+        if (f.properties.kind === 'hubzone') { hubRing = f.geometry.coordinates[0]; continue; }
+        if (f.properties.kind) continue;
+        colorById[String(f.properties.routeId)] = f.properties.color;
+      }
+      const ids = Object.keys(colorById);
+      if (!ids.length) return;
+      pollVehicles(ids, renderVehicles, {
+        intervalMs: 10000,
+        onError: (e) => console.warn('vehicle poll failed', e),
+      });
+    }
+    initBuses();
   </script>
 </body>
 </html>

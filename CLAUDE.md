@@ -193,12 +193,19 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
         detect-corridors, spike-division, diag-junctions. KEPT: lib-corridors.mjs (match-routes
         imports it), spread-routes.mjs (makes the editor's pre-spread starting geometry).
         Live HTML now: index.html (deployed), editor.html, polish-preview.html.
-- [ ] **2. Live buses (NEXT, the point of the map).** Wire `rapid.js` (committed, ready:
-      `fetchVehicles`/`fetchRoutes`/`fetchAllVehicles`/`pollVehicles`; already strips DriverName)
-      into index.html. Live dots from GetAllVehiclesForRoutes (CORS open, call direct from the
-      browser, NO proxy / Netlify Functions - see Data layer below). Color each dot by its route
-      color. A bus whose position falls inside the hub black box should read as "at the hub" (do
-      not plot its exact spot). Then rung 3 makes them glide between polls.
+- [x] **2. Live buses (DONE, verified locally 2026-06-19, NOT yet pushed).** `rapid.js`
+      wired into index.html (the inline script is now `type="module"` so it can `import
+      { pollVehicles }`). One GetAllVehiclesForRoutes call per sweep for the 25 drawn route
+      IDs: the multi-route `routeIDs=a,b,c` param is confirmed working (one 200 per poll,
+      every 10s, CORS open, no proxy). Each bus is a circle in a new `vehicles` source/layer,
+      colored by route (`colorById`, keyed by String(routeId) read from routes-final.geojson;
+      unknown route -> quiet grey `#555`), white casing, added with no beforeId so the dots sit
+      ABOVE everything incl. labels (the buses are the point). A bus inside the hub black box is
+      dropped via ray-cast `pointInRing` against the hubzone polygon: it reads as "at the hub"
+      (the station marker), not a fake exact spot. colorById + the hub ring are both read from
+      the same routes-final.geojson the map draws (one source of truth). Verified in the browser
+      preview: 39 live buses plotted as colored dots, index.html's own layers throw no errors.
+      NEXT: commit + push to deploy. Then rung 3 makes them glide between polls.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
