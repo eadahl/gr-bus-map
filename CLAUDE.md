@@ -318,6 +318,17 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     one-sided (0..~15 min, NO early/negative buses); ACTUALS still elusive (0 done rows captured -
     departures complete and drop off between ~11-min stop revisits, so the beeswarm currently shows
     PREDICTED dev, not actual; faster revisit or a completion-catch strategy is a later fix).
+    REALIZED CAPTURE 2026-06-20: confirmed the API NEVER reports a true actual departure (no ADT in
+    practice) - a bus lingers as "Scheduled" with dev growing, then drops off. So "measured truth" =
+    the dev observed AT/after the scheduled time (the last reading before it vanishes). Two fixes:
+    Trip was an OBJECT not a scalar (now store `Trip.TripId` + `seq`=StopSequence; old rows have the
+    object, the dashboard handles both); and the collector now RE-POLLS a stop ~90s after an imminent
+    departure to capture the dev at departure time. The dashboard beeswarm now plots REALIZED dev (per
+    departed trip, latest reading with t>=sched). First read: realized median ~3 min / ~80% >=1 min
+    late, vs predicted median 0 / 27% - buses run later than far-out predictions imply. CAVEAT
+    (selection bias): on-time buses depart at sched and drop off fast, late buses LINGER, so the set we
+    can measure at departure skews late - the ~80% is inflated and coverage is low (most departures
+    unmeasured). Improves as re-poll data accumulates; "split predicted vs actual" is the next step.
   - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
     occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
     ride on the Vehicles `occ` field (pending: is it ever non-zero?).

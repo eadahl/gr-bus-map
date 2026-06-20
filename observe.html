@@ -129,30 +129,37 @@
       return (m[1] ? -1 : 1) * ((+m[2]) * 3600 + (+m[3]) * 60 + (+m[4])) / 60;
     }
 
-    // Read the reliability log, take recent observations, keep the latest dev per
-    // departure, and plot the system's current deviation as a beeswarm.
+    // Read the reliability log and plot REALIZED deviation: for each recently
+    // departed trip, the deviation observed at/after its scheduled time (the truest
+    // "actual" the API allows, since it never reports a real departure time).
+    const tripIdOf = (t) => (t && typeof t === 'object') ? t.TripId : t;
     async function pollReliability() {
       let txt;
       try { txt = await (await fetch('./data/reliability-log.ndjson?_=' + Date.now())).text(); }
       catch { document.getElementById('beenote').textContent = '· no log file'; return; }
-      const now = Date.now(), latest = new Map();
+      const now = Date.now(), byDep = new Map();
       for (const ln of txt.trim().split('\n')) {
         if (!ln) continue;
         let r; try { r = JSON.parse(ln); } catch { continue; }
-        if (r.t < now - 15 * 60000) continue;          // recent observations only
-        const k = r.route + '|' + r.trip + '|' + r.stop;
-        const p = latest.get(k);
-        if (!p || r.t > p.t) latest.set(k, r);          // newest reading per departure
+        if (!r.sched || r.sched < now - 45*60000 || r.sched > now + 5*60000) continue; // ~last 45 min
+        const k = r.stop + '|' + tripIdOf(r.trip) + '|' + r.sched;
+        if (!byDep.has(k)) byDep.set(k, { sched: r.sched, route: String(r.route), rows: [] });
+        byDep.get(k).rows.push({ t: r.t, dev: devMin(r.dev) });
       }
-      const obs = [...latest.values()].map(r => ({ dev: devMin(r.dev), route: String(r.route), done: r.done }))
-        .filter(o => o.dev != null);
-      const devs = obs.map(o => o.dev).sort((a, b) => a - b);
+      const realized = []; let departed = 0;
+      for (const dep of byDep.values()) {
+        if (dep.sched > now) continue;                 // not yet departed
+        departed++;
+        // the latest reading taken at/after scheduled time = the realized deviation
+        const cand = dep.rows.filter(x => x.t >= dep.sched - 30000 && x.dev != null).sort((a,b) => b.t - a.t)[0];
+        if (cand) realized.push({ dev: cand.dev, route: dep.route });
+      }
+      const devs = realized.map(o => o.dev).sort((a, b) => a - b);
       const med = devs.length ? devs[Math.floor(devs.length / 2)] : 0;
-      const late = obs.filter(o => o.dev >= 1).length;
-      const acts = obs.filter(o => o.done).length;
+      const late = realized.filter(o => o.dev >= 1).length;
       document.getElementById('beenote').textContent =
-        `· ${obs.length} recent departures · median ${med.toFixed(1)} min · ${obs.length ? Math.round(late/obs.length*100) : 0}% ≥1 min late · ${acts} actuals`;
-      renderBeeswarm(obs);
+        `· ${realized.length} measured departures (last 45 min) · median ${med.toFixed(1)} min · ${realized.length ? Math.round(late/realized.length*100) : 0}% ≥1 min late · ${departed - realized.length} unmeasured`;
+      renderBeeswarm(realized);
     }
 
     function renderBeeswarm(obs) {

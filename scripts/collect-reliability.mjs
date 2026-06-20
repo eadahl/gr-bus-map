@@ -57,6 +57,8 @@ let idx = 0, polls = 0, written = 0, errors = 0, cycles = 0;
 const startedAt = Date.now();
 let stopped = false;
 
+const repoll = new Map(); // stopId -> due time (re-poll a stop right after an imminent departure)
+
 async function pollStop(stopId) {
   let j;
   try { j = await getJson(`${BASE}/StopDepartures/Get/${stopId}`); }
@@ -70,11 +72,18 @@ async function pollStop(stopId) {
         const done = !!d.IsCompleted;
         if (!done && !(sched && sched <= now + NEAR_MS)) continue; // skip far-future
         const act = parseAspNetDate(d.ADT);
-        // Include the dev MINUTE in the dedup key so we re-log as the predicted
-        // deviation evolves toward departure (not just once at first sighting),
-        // and on completion (done/act change). 1-min granularity keeps it bounded.
+        const tripId = (d.Trip && d.Trip.TripId != null) ? d.Trip.TripId : d.Trip; // Trip is an object
+        // The API never reports a true actual departure (no ADT in practice): a bus
+        // lingers as "Scheduled" with dev growing, then drops off. So we re-poll a
+        // stop ~90s after an imminent departure to capture the dev AT departure time
+        // (the truest "actual" available). Dedup key includes the dev minute so we
+        // re-log as the prediction evolves.
+        if (sched && sched > now && sched <= now + 150000) {
+          const due = sched + 90000;
+          if (!repoll.has(stopId) || due < repoll.get(stopId)) repoll.set(stopId, due);
+        }
         const devMinB = d.Dev ? String(d.Dev).slice(0, 5) : '';
-        const key = `${stopId}|${d.Trip}|${sched}|${done ? 1 : 0}|${act || ''}|${devMinB}`;
+        const key = `${stopId}|${tripId}|${sched}|${done ? 1 : 0}|${act || ''}|${devMinB}`;
         if (seen.has(key)) continue;
         seen.add(key);
         lines.push(JSON.stringify({
@@ -82,19 +91,29 @@ async function pollStop(stopId) {
           stop: stopId,
           route: rd.RouteId,
           dir: rd.DirectionCode || rd.Direction || null,
-          trip: d.Trip,
+          trip: tripId,                       // TripId (scalar)
+          seq: d.Trip && d.Trip.StopSequence, // this stop's position in the trip
           sched,                              // scheduled departure (epoch ms)
           est: parseAspNetDate(d.EDT),        // estimated departure
-          act,                                // actual departure (null until completed)
-          dev: d.Dev,                         // "HH:MM:SS" deviation (predicted now / actual when done)
-          done,                               // completed = has actually departed
-          status: d.StopStatusReportLabel,    // Scheduled / Departed / etc.
+          act,                                // actual departure (null in practice)
+          dev: d.Dev,                         // "HH:MM:SS" deviation (the realized value when observed at/after sched)
+          done,
+          status: d.StopStatusReportLabel,
         }));
       }
     }
   }
   if (lines.length) { appendFileSync(LOG, lines.join('\n') + '\n'); written += lines.length; }
   if (seen.size > 300000) seen.clear(); // bound memory; mild re-logging after is fine
+}
+
+// Fire due re-polls (stops with a departure that just happened).
+async function drainRepolls() {
+  if (stopped) return;
+  const now = Date.now();
+  for (const [stopId, due] of repoll) {
+    if (due <= now) { repoll.delete(stopId); pollStop(stopId); }
+  }
 }
 
 function loop() {
@@ -121,6 +140,7 @@ function summary() {
 process.on('SIGINT', summary);
 process.on('SIGTERM', summary);
 
-console.log(`reliability sampler: ${timepoints.length} timepoints, one every ${STEP_MS}ms (~${Math.round(timepoints.length * STEP_MS / 60000)} min/cycle) -> ${LOG}`);
+console.log(`reliability sampler: ${timepoints.length} timepoints, one every ${STEP_MS}ms (~${Math.round(timepoints.length * STEP_MS / 60000)} min/cycle) + re-polls at departure -> ${LOG}`);
 console.log('Ctrl-C to stop (append-only; safe to resume).');
 loop();
+setInterval(drainRepolls, 8000);
