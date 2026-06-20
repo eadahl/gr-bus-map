@@ -352,6 +352,13 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       no spray), the network drawing itself from real movement; refreshes while the tab is open.
     Findings: ~17/18 stopped buses are at a designated stop (at-stop inference clean); occupancy
     all-Empty so far (likely not live - watch over peak before building crowding).
+    INTERROGATION (2026-06-20): one shared route-selection model across the whole dashboard - hover
+    any dot/row/line to light up that route everywhere and fade the rest; CLICK to PIN it (sticky,
+    click empty space to release). Wired on the beeswarm (+ a tooltip: route name, the dot's dev/kind/
+    sched/stop, and a route rollup), the fleet map, the fleet table, the tracks, and a new RELIABILITY
+    RANKING panel (routes ranked by late share, accumulated this session from OpStatus, clickable to
+    pin) - which makes the bimodal-punctuality insight live and doubles as a route list. The
+    stressed-corridor convergence stays a doc finding, not a live panel (synthesized, would over-claim).
     `scripts/build-stringline.mjs [routeId] [--hours N]` is kept as an OFFLINE Marey builder (writes
     data/stringline.json) for windows too large for the browser; the standalone stringline.html was
     folded into the dashboard tab and removed.
