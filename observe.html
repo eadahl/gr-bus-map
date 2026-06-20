@@ -74,6 +74,15 @@
     <section id="tab-dev" class="tab" hidden>
       <div class="sec">deviation beeswarm <span class="muted" id="beenote"></span></div>
       <div class="card"><svg id="beeswarm" width="100%" viewBox="0 0 1000 280" style="display:block"></svg></div>
+      <div class="sub" style="margin-top:10px;line-height:1.7">
+        each dot = one timepoint departure, colored by route. left→right = minutes late (0 = on time; no early buses).
+        <b style="font-weight:600">↑ above = predicted</b> (upcoming buses' current prediction) ·
+        <b style="font-weight:600">↓ below = measured</b> (departed buses, deviation seen at/after scheduled time).
+        column height = how many departures at that lateness. <b style="font-weight:600">read the gap:</b> if predicted piles
+        at on-time but measured pushes right, the schedule is optimistic, buses run later than predicted.
+        caveat: measured skews late + sparse (on-time buses vanish before we can catch them, late ones linger),
+        so trust the shape, not the exact %.
+      </div>
     </section>
 
     <section id="tab-string" class="tab" hidden>
