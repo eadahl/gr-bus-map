@@ -360,6 +360,10 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       (`anim` map keyed per vehicle, `lerp`/`curPos`, GLIDE_MS=10000). Draws on every poll too, not
       just rAF, so a backgrounded tab (where browsers throttle rAF) still updates. Carries `bearing`
       for the directionality marker (NEXT: pick a form from the dir-* studies; leading arrow / pin).
+      THREE MARKER STATES on the deployed map: moving = solid route-colored dot (white casing);
+      off-route/anomaly = hollow ring (near-white fill, colored stroke); AT A STOP = a soft route-
+      colored halo UNDER the dot that gently pulses (sine breath in the frame loop), shown when a bus
+      is speed~0 within 40 m of a GetAllStops location (stops fetched once). Reads like doors opening.
       Straight-line interpolation between snapped points; following the road curve is a refinement.
       Note: rAF is paused in the headless preview, so the glide only shows in a real visible browser.
       LATENCY (measured 2026-06-20, from Erik watching buses downtown vs the app, ~10-20s behind):
@@ -374,6 +378,33 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
 - [ ] **6. Phase two (mobile).** Scout arrivals endpoint, build wayfinding face.
+
+## What the data shows so far (2026-06-20, ~17 h of one weekday)
+
+From ~84k vehicle positions, the reliability + detour logs, and the dashboard. One day,
+weekday-only; weekend will differ. Numbers are grounded but provisional.
+
+- **Punctuality is bimodal by route TYPE.** Late share of service time (from `OpStatus` across all
+  position reports): chronically late = route 8 Prairie (30%), 4 Eastern (27%), 5 Wealthy (24%),
+  15 East Leonard (23%), 10 Clyde Park (21%), 24 Burton (20%), 6 Eastown (18%). Reliably on time =
+  Silver Line 90 (6%), DASH 51 (5%), Fulton 14 (2%), Millennium 1000 (0%). Long crosstown/south
+  coverage routes accumulate delay; short dedicated routes (BRT, shuttle, downtown loop) stay tight.
+- **The system degrades through the day.** Late% by hour: ~3% at 6am -> 8% at 8am -> 17% noon ->
+  27% at 3pm -> ~33% by 4pm. Mornings run tight; the PM peak is where reliability falls apart.
+- **One stressed-corridor cluster.** The chronically-late routes, the detoured routes (8,5,10,24,6,
+  15,3,1,11 of the drawn set), and the coverage-gap clusters (southern Pine Rest / Target-Rivertown /
+  UM Health branches) are LARGELY THE SAME routes. The reliability layer and the GPS base-map rebuild
+  are really one effort aimed at the same handful of long southern/crosstown lines.
+- **Occupancy is dead.** Across ~53k readings with the field, every value is 0/Empty. No live
+  crowding signal exists; drop crowding from the design rather than wait.
+- **Lateness is one-sided.** Buses are rarely early (a tiny `EARLY` slice in OpStatus, ~33 of 6.6k
+  reliability rows negative); when late, up to ~22 min. The schedule is systematically optimistic
+  (predicted-vs-measured beeswarm gap).
+- **Detours are semi-permanent.** The detoured set barely changed across 17 h (4 distinct snapshots),
+  so these are long-standing reroutes, not transient. A months-long detour IS the route's real
+  current path, so reconstructing from GPS will correctly capture the detoured geometry.
+- **Stopped ~35% of the time** (speed=0 across position reports), and ~17/18 stopped buses sit at a
+  designated stop (the at-stop inference is clean).
 
 ## Stack and conventions
 
