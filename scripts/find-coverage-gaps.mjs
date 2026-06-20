@@ -111,10 +111,13 @@ for (const line of rows) {
 
   const ck = `${Math.round(o.lat / dLat)},${Math.round(o.lon / dLon)}`;
   let c = cells.get(ck);
-  if (!c) { c = { latSum: 0, lonSum: 0, count: 0, routes: new Set(), dests: new Set(), distSum: 0 }; cells.set(ck, c); }
+  if (!c) { c = { latSum: 0, lonSum: 0, count: 0, routes: new Set(), dests: new Set(), trips: new Set(), vehicles: new Set(), distSum: 0, tMin: Infinity, tMax: -Infinity }; cells.set(ck, c); }
   c.latSum += o.lat; c.lonSum += o.lon; c.count += 1;
   c.routes.add(String(o.routeId));
   if (o.dest) c.dests.add(o.dest);
+  c.trips.add(`${o.routeId}|${o.tripId}`);   // distinct scheduled runs that hit this spot
+  c.vehicles.add(String(o.vehicleId));
+  if (o.fixTime) { c.tMin = Math.min(c.tMin, o.fixTime); c.tMax = Math.max(c.tMax, o.fixTime); }
   if (paths && paths.length) c.distSum += snapDistM([o.lon, o.lat], paths);
 }
 
@@ -122,21 +125,33 @@ const clusters = [...cells.values()]
   .map((c) => ({
     lat: c.latSum / c.count, lon: c.lonSum / c.count, count: c.count,
     routes: [...c.routes], dests: [...c.dests], avgOffM: c.count ? Math.round(c.distSum / c.count) : null,
+    trips: c.trips.size, vehicles: c.vehicles.size,
+    hourSpan: Number.isFinite(c.tMin) ? +(((c.tMax - c.tMin) / 3600000)).toFixed(1) : 0,
   }))
-  .sort((a, b) => b.count - a.count);
+  .sort((a, b) => b.trips - a.trips || b.count - a.count);
+
+// Systematic = hit by several distinct trips (a branch or a persistent detour),
+// not a single bus once. One-off = a single trip (GPS glitch, deadhead, layover).
+const SYSTEMATIC_TRIPS = 3;
+const systematic = clusters.filter((c) => c.trips >= SYSTEMATIC_TRIPS);
+const oneOff = clusters.filter((c) => c.trips === 1);
 
 // ── report ───────────────────────────────────────────────────────────────────
 const offTotal = clusters.reduce((s, c) => s + c.count, 0);
 const considered = total - atHub;
 console.log(`scanned ${total} positions: ${atHub} at hub (skipped), ${onRoute} on route, ${offTotal} off route (${considered ? ((offTotal / considered) * 100).toFixed(1) : 0}% of non-hub), ${noGeom} on routes with no drawn line.`);
-console.log(`${clusters.length} coverage-gap clusters (>${SNAP_MAX_M} m off, ~${CELL_M} m cells).\n`);
+console.log(`${clusters.length} coverage-gap clusters (>${SNAP_MAX_M} m off, ~${CELL_M} m cells).`);
+const sysPts = systematic.reduce((s, c) => s + c.count, 0);
+console.log(`  systematic (>=${SYSTEMATIC_TRIPS} distinct trips): ${systematic.length} clusters, ${sysPts} points (${offTotal ? ((sysPts / offTotal) * 100).toFixed(0) : 0}% of off-route) -> likely real branches/detours`);
+console.log(`  one-off (1 trip): ${oneOff.length} clusters -> likely GPS glitch / deadhead / layover\n`);
 
+// Show systematic clusters first (the actionable ones), sorted by distinct trips.
 const show = process.argv.includes('--all') ? clusters : clusters.slice(0, 15);
-console.log('count  routes        avgOff   ~location (lat,lon)        destinations');
+console.log('trips  pts  veh  hrs  routes        avgOff   ~location (lat,lon)        destinations');
 for (const c of show) {
   const loc = `${c.lat.toFixed(5)},${c.lon.toFixed(5)}`;
   const dest = c.dests.slice(0, 3).join(' / ') || '-';
-  console.log(`${String(c.count).padStart(5)}  ${c.routes.join(',').padEnd(12)}  ${(c.avgOffM != null ? c.avgOffM + 'm' : 'no-geom').padStart(6)}  ${loc.padEnd(24)}  ${dest}`);
+  console.log(`${String(c.trips).padStart(5)}  ${String(c.count).padStart(3)}  ${String(c.vehicles).padStart(3)}  ${String(c.hourSpan).padStart(3)}  ${c.routes.join(',').padEnd(12)}  ${(c.avgOffM != null ? c.avgOffM + 'm' : 'no-geom').padStart(6)}  ${loc.padEnd(24)}  ${dest}`);
 }
 if (clusters.length > show.length) console.log(`... and ${clusters.length - show.length} more (--all to list)`);
 
@@ -145,7 +160,7 @@ writeFileSync(OUT, JSON.stringify({
   type: 'FeatureCollection',
   features: clusters.map((c) => ({
     type: 'Feature',
-    properties: { count: c.count, routes: c.routes.join(','), dests: c.dests.join(' / '), avgOffM: c.avgOffM },
+    properties: { count: c.count, trips: c.trips, vehicles: c.vehicles, hourSpan: c.hourSpan, routes: c.routes.join(','), dests: c.dests.join(' / '), avgOffM: c.avgOffM },
     geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
   })),
 }));
