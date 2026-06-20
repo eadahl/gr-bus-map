@@ -362,6 +362,15 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       for the directionality marker (NEXT: pick a form from the dir-* studies; leading arrow / pin).
       Straight-line interpolation between snapped points; following the road curve is a refinement.
       Note: rAF is paused in the headless preview, so the glide only shows in a real visible browser.
+      LATENCY (measured 2026-06-20, from Erik watching buses downtown vs the app, ~10-20s behind):
+      the feed itself is ~11s stale (median now - LastUpdated, p90 16s) and only refreshes each bus
+      ~every 10-15s, so polling faster than ~10s just over-samples (duplicate positions) and, with a
+      short glide, makes the dot finish and PAUSE = choppy. Our 10s poll/10s glide ~matches the feed
+      cadence (smooth) but the glide is retrospective (eases TOWARD the last known point), adding to
+      the lag. PARKED (Erik wants this later, esp. for rung-6 wayfinding): EXTRAPOLATION - project the
+      bus forward along heading/route by speed so the dot shows where it is NOW, fighting both glide
+      lag and feed latency (cost: overshoot at stops/turns, correction on next poll). Calm map is fine
+      as-is; extrapolation earns its keep on the mobile "is my bus here now" face.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
 - [ ] **6. Phase two (mobile).** Scout arrivals endpoint, build wayfinding face.
