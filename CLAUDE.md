@@ -316,7 +316,13 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
   - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
     occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
     ride on the Vehicles `occ` field (pending: is it ever non-zero?).
-- [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
+- [x] **3. Calm motion (DONE + deployed 2026-06-20).** index.html glides each bus from its last
+      drawn position to its new (snapped/pinned) target over the poll interval via requestAnimationFrame
+      (`anim` map keyed per vehicle, `lerp`/`curPos`, GLIDE_MS=10000). Draws on every poll too, not
+      just rAF, so a backgrounded tab (where browsers throttle rAF) still updates. Carries `bearing`
+      for the directionality marker (NEXT: pick a form from the dir-* studies; leading arrow / pin).
+      Straight-line interpolation between snapped points; following the road curve is a refinement.
+      Note: rAF is paused in the headless preview, so the glide only shows in a real visible browser.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
 - [ ] **6. Phase two (mobile).** Scout arrivals endpoint, build wayfinding face.
