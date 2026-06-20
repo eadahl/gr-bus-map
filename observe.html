@@ -40,6 +40,18 @@
     <div class="sec">live fleet snapshot (direct from the API)</div>
     <div class="cards" id="stats"></div>
 
+    <div class="sec">visuals (exploration)</div>
+    <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:14px;align-items:start;margin-bottom:6px">
+      <div class="card" style="padding:8px 8px 6px">
+        <div class="k" style="margin-bottom:4px">live fleet map <span class="muted" id="mapnote"></span></div>
+        <svg id="minimap" width="100%" viewBox="0 0 560 420" style="display:block"></svg>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="card"><div class="k">on time / late / starting</div><div id="otbar" style="margin-top:6px"></div></div>
+        <div class="card"><div class="k" style="margin-bottom:6px">this session</div><div id="sparks" style="display:flex;gap:16px;flex-wrap:wrap"></div></div>
+      </div>
+    </div>
+
     <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
     <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
   </div>
@@ -58,6 +70,8 @@
 
     let stops = [], routes = {}, sortKey = 'route', sortDir = 1;
     const logState = {}; // name -> {size, prevSize, lastGrow}
+    let proj = null, MM_W = 560, MM_H = 420;   // mini-map projection
+    const hist = [];                            // session time series for sparklines
 
     async function loadStatic() {
       try {
@@ -68,6 +82,68 @@
         const r = await (await fetch(`${REST}/Routes/GetAllRoutes?_=${Date.now()}`)).json();
         for (const x of r) routes[String(x.RouteId)] = { color: '#'+(x.Color||'888888').replace('#',''), name: x.ShortName, det: /_DET_/.test(x.RouteTraceFilename||'') };
       } catch {}
+      try {
+        const g = await (await fetch(`./data/routes-final.geojson?_=${Date.now()}`)).json();
+        buildMiniMap(g);
+      } catch {}
+    }
+
+    // Project the drawn routes into the mini-map SVG once (static background); the
+    // bus dots are redrawn over it each poll.
+    function buildMiniMap(g) {
+      let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+      const lines = [];
+      for (const f of g.features) {
+        if (f.properties.kind) continue;
+        const segs = f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : [f.geometry.coordinates];
+        for (const seg of segs) { lines.push({ c: seg, color: f.properties.color }); for (const [x,y] of seg) { if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; } }
+      }
+      const lngR = maxX-minX, latR = maxY-minY, cos = Math.cos((minY+latR/2)*Math.PI/180);
+      MM_H = Math.round(MM_W * (latR/(lngR*cos)));
+      proj = (lng,lat) => [ ((lng-minX)/lngR)*MM_W, ((maxY-lat)/latR)*MM_H ];
+      const paths = lines.map(L => {
+        let d=''; L.c.forEach((p,i)=>{ const [x,y]=proj(p[0],p[1]); d+=(i?'L':'M')+x.toFixed(1)+','+y.toFixed(1); });
+        return `<path d="${d}" fill="none" stroke="${L.color}" stroke-width="1" opacity="0.3"/>`;
+      }).join('');
+      const svg = document.getElementById('minimap');
+      svg.setAttribute('viewBox', `0 0 ${MM_W} ${MM_H}`);
+      svg.innerHTML = `<g>${paths}</g><g id="busdots"></g>`;
+    }
+
+    function spark(label, color, vals) {
+      const W=130, H=34, n=vals.length;
+      const max=Math.max(1,...vals), min=Math.min(0,...vals), rng=(max-min)||1;
+      const pts = vals.map((v,i)=>`${(i/Math.max(1,n-1)*W).toFixed(1)},${(H-((v-min)/rng)*(H-6)-3).toFixed(1)}`).join(' ');
+      const cur = vals.length ? vals[vals.length-1] : '-';
+      return `<div><div class="k">${label}: <b style="color:var(--ink)">${cur}</b></div>
+        <svg width="${W}" height="${H}" style="display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2"/></svg></div>`;
+    }
+
+    function renderVisuals() {
+      if (proj) {
+        const g = document.getElementById('busdots');
+        if (g) g.innerHTML = fleet.map(b => {
+          const [x,y] = proj(b.lon, b.lat), col = (routes[b.route]||{}).color || '#888';
+          const late = b.status === 'LATE';
+          const halo = b.atStop ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="none" stroke="${col}" opacity="0.5"/>` : '';
+          return halo + `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="${late?'#c23b34':'#fff'}" stroke-width="${late?1.5:0.6}"/>`;
+        }).join('');
+        document.getElementById('mapnote').textContent = '· ' + fleet.length + ' buses';
+      }
+      const ot=fleet.filter(b=>b.status==='ONTIME').length, la=fleet.filter(b=>b.status==='LATE').length, ts=fleet.filter(b=>b.status==='TRIP START').length;
+      const other=fleet.length-ot-la-ts, tot=fleet.length||1;
+      const seg=(n,c)=> n ? `<div style="width:${(n/tot*100).toFixed(1)}%;background:${c};height:18px"></div>` : '';
+      document.getElementById('otbar').innerHTML =
+        `<div style="display:flex;border-radius:4px;overflow:hidden;border:0.5px solid var(--line)">`+
+        seg(ot,'#1d8f5e')+seg(la,'#c23b34')+seg(ts,'#9a9a85')+seg(other,'#d3d1c7')+`</div>`+
+        `<div class="d" style="margin-top:4px">on time ${ot} · late ${la} · starting ${ts}${other?' · other '+other:''}</div>`;
+      hist.push({ fleet: fleet.length, late: la, atStop: fleet.filter(b=>b.atStop).length });
+      if (hist.length > 80) hist.shift();
+      document.getElementById('sparks').innerHTML = [
+        ['fleet','#111', h=>h.fleet],
+        ['late','#c23b34', h=>h.late],
+        ['at stop','#1d8f5e', h=>h.atStop],
+      ].map(([lab,c,f]) => spark(lab, c, hist.map(f))).join('');
     }
 
     function nearestStop(c) {
@@ -132,7 +208,7 @@
           stopped, atStop, near, lat: b.Latitude, lon: b.Longitude,
         };
       });
-      renderStats(); renderFleet();
+      renderStats(); renderFleet(); renderVisuals();
       document.getElementById('fleetnote').textContent = '· ' + fleet.length + ' buses · updated ' + new Date().toLocaleTimeString();
     }
 
