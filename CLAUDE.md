@@ -276,11 +276,26 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     extend past where the drawn map stops. Lines wobble (raw-GPS median, pre-map-match) = expected.
     Run: `node scripts/reconstruct-routes.mjs`. Tunables at top (MIN_PATTERN_TRIPS, SIM_THRESHOLD,
     resample N). Directions kept SEPARATE for now (agreed).
-  - NEXT STEPS (not built yet): (2b) map-match the reconstructed patterns onto OSM roads with the
-    existing match-routes machinery (dense ordered GPS is a BETTER input than one GTFS shape), which
-    also removes the wobble. (3) Decide how patterns reach the screen: enrich the editor's starting
-    geometry so Erik hand-finishes branches, vs a fuller algorithmic finish. Re-run on a fuller
-    (weekday + weekend) log first; several routes (3, 24, 44, 51, ...) had <3 trips this sample.
+  - API DISCOVERY (2026-06-20): full surface mapped in [docs/rapid-api.md](docs/rapid-api.md).
+    Three findings reshape this initiative:
+    (a) DETOURS ARE PERVASIVE: 15 of 25 visible routes were detoured at probe time. A detoured
+        route's KML trace filename flips to `Route{N}_DET_*.kml` (reroute baked in) and it carries
+        a PublicMessages alert. So a reconstructed off-route segment may be a temporary detour, not
+        a real branch. We MUST log detours (trace filenames + messages) over time, NOW, so historical
+        GPS can be labeled detour-vs-branch. This is the one capture-it-now item (agreed with Erik).
+    (b) THIRD BASE CANDIDATE: the agency's own `Route{N}.kml` geometry. The head-to-head base
+        comparison is now THREE-way: GTFS shapes (current) vs official KML traces vs reconstructed GPS.
+    (c) RELIABILITY DATA EXISTS: StopDepartures gives scheduled-vs-ACTUAL (`ADT`/`Dev`) per stop per
+        trip. Enables an on-time/confidence layer, ghost-bus (missed-trip) detection, bunching. This
+        is the big post-base-map feature direction Erik is excited about.
+  - NEXT STEPS (not built yet): (2a) DETOUR LOGGER now (snapshot trace filenames + PublicMessages
+    every ~15-30 min alongside the GPS collector). (2b) map-match the reconstructed patterns onto OSM
+    roads with the existing match-routes machinery (also removes the raw-GPS wobble). (3) THREE-WAY
+    base head-to-head (GTFS vs KML vs reconstructed GPS), then decide how the winning base reaches the
+    screen: enrich the editor's starting geometry for hand-finish, vs a fuller algorithmic finish.
+    Re-run reconstruct on a fuller (weekday + weekend) log first; several routes (3, 24, 44, 51, ...)
+    had <3 trips in the weekend sample. (4 = separate track) reliability/on-time/ghost-bus/crowding,
+    powered by StopDepartures + the Vehicles crowding fields.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
@@ -299,16 +314,37 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
 
 ## Data layer (key facts, do not get these wrong)
 
-- Live vehicles: `https://connect.ridetherapid.org/InfoPoint/rest/Vehicles/GetAllVehiclesForRoutes?routeIDs=<id>`.
-  CORS is open (`Access-Control-Allow-Origin: *`), verified 2026-06-19. Call it
-  directly from the browser. **No serverless proxy. No Netlify Functions.**
-- **Privacy:** the raw feed exposes `DriverName`. Never surface it. `rapid.js`
-  already drops driver fields from the normalized shape. Keep it that way.
+- **FULL API INVENTORY: [docs/rapid-api.md](docs/rapid-api.md)** (probed 2026-06-20).
+  Read it before building anything that touches agency data. Summary below.
+- Provider is Avail InfoPoint at `connect.ridetherapid.org`. **CORS is open
+  (`Access-Control-Allow-Origin: *`) on EVERY endpoint, including the KML traces**,
+  so the browser can call all of it directly. **No serverless proxy. No Netlify
+  Functions.** Dates are ASP.NET `/Date(ms-offset)/` (ms = epoch UTC).
+- Working endpoints (all GET JSON unless noted):
+  - `Vehicles/GetAllVehiclesForRoutes?routeIDs=1,2,3` - live positions. Multi-route
+    in one call is CONFIRMED (supersedes HANDOFF's "unverified"). Beyond position:
+    `Deviation`, `OpStatus`, `OccupancyStatus`/`OnBoard`/capacity (crowding),
+    `TripId`/`RunId`.
+  - `Routes/GetVisibleRoutes` (25) / `Routes/GetAllRoutes` (34 incl. hidden) /
+    `RouteDetails/Get/{id}`. Carry `RouteStops` (official ordered stop sequence),
+    embedded `Vehicles` + `Messages`, and `RouteTraceFilename`.
+  - `Stops/GetAllStops` (1493) / `Stops/Get/{id}`. `IsTimePoint` flags anchors.
+  - `StopDepartures/Get/{stopId}` - schedule vs actual: `SDT/EDT/STA/ETA` plus
+    `ADT/ATA` (ACTUAL) and `Dev`. Powers on-time / reliability work.
+  - `PublicMessages/GetCurrentMessages` (alerts/detours; `Routes[]` + date window;
+    `Effect` is always UnknownEffect so classify by text).
+  - `Resources/Traces/Route{N}.kml` - the agency's OWN route geometry. Filename
+    flips to `Route{N}_DET_*.kml` with the reroute baked in when detoured (15 of 25
+    routes were detoured at probe time). A third base-geometry candidate.
+  - NOT available (404, do not re-chase): map/GetBaseData, ScheduleAdherence,
+    RoutePatterns, Trips, Landmarks, GTFS-RT protobuf, GTFS zip. See the doc.
+- **Privacy:** the Vehicles feed exposes `DriverName`/`DriverFirstName`/
+  `DriverLastName`/`DriverFareboxId`/`VehicleFareboxId`/`BlockFareboxId`. Never
+  surface any of them. `rapid.js` and the collectors drop them; keep it that way.
 - Static GTFS (routes, shapes, stops) is seasonal. **Parse once, commit as static
   GeoJSON.** Do not fetch or parse it at runtime.
-- `rapid.js` is the fetch/normalize/poll layer, committed and ready. Not yet wired
-  into the map (that is rung 2). Exposes `fetchVehicles`, `fetchRoutes`,
-  `fetchAllVehicles`, `pollVehicles`.
+- `rapid.js` is the fetch/normalize/poll layer, wired into index.html as of rung 2.
+  Exposes `fetchVehicles`, `fetchRoutes`, `fetchAllVehicles`, `pollVehicles`.
 
 ## Working preferences (Erik)
 

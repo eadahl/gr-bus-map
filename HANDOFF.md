@@ -34,6 +34,13 @@ The basemap's entire job is to disappear. Principles: Super Normal, Calm Technol
 
 Provider is Avail InfoPoint, hosted at `connect.ridetherapid.org`.
 
+> **Update 2026-06-20:** the full API surface has since been probed and documented
+> in [docs/rapid-api.md](docs/rapid-api.md), which supersedes the scouting notes
+> below. Key deltas: multi-route in one call is CONFIRMED; stop-level arrivals are
+> scouted (`StopDepartures/Get/{stopId}`, with scheduled-vs-actual `ADT`/`Dev`);
+> the agency publishes its own route geometry as KML traces (with detours baked in
+> when active); CORS is open on every endpoint.
+
 ### Live vehicles (CONFIRMED, verified 2026-06-19)
 
 - Endpoint: `https://connect.ridetherapid.org/InfoPoint/rest/Vehicles/GetAllVehiclesForRoutes?routeIDs=2`
