@@ -228,6 +228,32 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       Verified in the browser preview: one poll = 25 pinned solid dots on their ribbons + 3
       hollow-ring anomalies at true GPS + 1 dropped at hub; no errors from index.html's own layers.
       Then rung 3 makes them glide between polls.
+- **COVERAGE / ACCURATE ROUTES FROM ACCUMULATED GPS (initiative, started 2026-06-19).** Why: the
+  anomaly rings above are a coverage gap. The drawn lines miss branches / full extent, so off-route
+  buses can't pin. Erik wants to fix this by accumulating real bus positions over time and building
+  geometry from where buses ACTUALLY drive.
+  - KEY PIPELINE FACT (verified): the deployed map is NOT regenerable from GTFS. `polish-routes.mjs`
+    reads `data/route-overrides.geojson` (Erik's HAND geometry) and writes `routes-final.geojson`.
+    `build-routes.mjs` / `match-routes.mjs` only make the STARTING geometry Erik edited from. So
+    "use all GTFS shapes" alone does NOT fix the deployed coverage gap: a branch only reaches the
+    screen if it gets into the hand geometry (or a new finish) and through polish. (`build-routes.mjs`
+    line 86-96 picks ONE shape per route+direction, the longest; that is where branches drop. GTFS
+    `shapes.txt` does contain every pattern: ~380 shapes across 25 routes, most are duplicates of a
+    few distinct patterns per direction. Distinct patterns with real trip counts = the branches.)
+  - [DONE] STEP 1: collector. `scripts/collect-vehicles.mjs` polls GetAllVehiclesForRoutes for the
+    25 drawn routes every ~12s and appends each NEW position (dedup by vehicle+trip+latlon) to
+    `data/vehicle-log.ndjson` (GITIGNORED; we commit only derived geometry). Strict field ALLOWLIST,
+    so DriverName/farebox are never logged (verified: 0 leaks). Captures `tripId` (stitch one run),
+    `dir`, `dest` (names the branch), lat/lon/heading/speed/fixTime. Run it over time (a full
+    service week is ideal): `node scripts/collect-vehicles.mjs`. Append-only, Ctrl-C is clean,
+    safe to stop/resume.
+  - NEXT STEPS (not built yet): (2) reconstruct - group the log by tripId, order by fixTime ->
+    actual traveled polylines; cluster into distinct patterns per route+direction (the branches);
+    map-match each with the existing match-routes machinery (dense ordered GPS is a BETTER input
+    than one GTFS shape). (3) Decide how patterns reach the screen: enrich the editor's starting
+    geometry so Erik hand-finishes branches, vs a fuller algorithmic finish. (4) Side benefit: a
+    cheap feedback loop is to log the live ANOMALIES (buses >80 m off their line); recurring
+    clusters pinpoint exactly which segments the drawn map is missing.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.

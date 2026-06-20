@@ -34,3 +34,8 @@ data/routes-merged-spread-debug.geojson
 
 # Note: data/routes-final.geojson (the polish-pass output) is COMMITTED on purpose:
 # it is the static geometry the deployed index.html draws (no build step on Netlify).
+
+# Accumulated live-vehicle GPS log from scripts/collect-vehicles.mjs. Large and
+# always growing; we commit only the DERIVED route geometry, not the raw log
+# (same "parse once, commit static" rule as the GTFS source).
+data/vehicle-log.ndjson
