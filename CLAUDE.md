@@ -247,13 +247,20 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     `dir`, `dest` (names the branch), lat/lon/heading/speed/fixTime. Run it over time (a full
     service week is ideal): `node scripts/collect-vehicles.mjs`. Append-only, Ctrl-C is clean,
     safe to stop/resume.
+  - [DONE] STEP 1b: coverage-gap finder (the cheap feedback loop). `scripts/find-coverage-gaps.mjs`
+    reads the log + routes-final.geojson, snaps each logged position to its route's line with the
+    SAME pin math + hub-zone exclusion the map uses, flags positions >80 m off (a coverage gap),
+    and clusters them into ~150 m cells so recurring clusters name the missing segments (with the
+    `dest` field). Run: `node scripts/find-coverage-gaps.mjs` (--all to list every cluster). Writes
+    data/coverage-gaps.geojson (cluster centroids, gitignored). First small late-night run (109
+    positions) already surfaced: routes 15+6 ~424 m off SW of the hub by the river (matches the
+    known "river crossing" parked refinement), route 3 -> Target-RiverTown branch, route 51/DASH
+    loop variant. Sample needs a full service week to be representative.
   - NEXT STEPS (not built yet): (2) reconstruct - group the log by tripId, order by fixTime ->
     actual traveled polylines; cluster into distinct patterns per route+direction (the branches);
     map-match each with the existing match-routes machinery (dense ordered GPS is a BETTER input
     than one GTFS shape). (3) Decide how patterns reach the screen: enrich the editor's starting
-    geometry so Erik hand-finishes branches, vs a fuller algorithmic finish. (4) Side benefit: a
-    cheap feedback loop is to log the live ANOMALIES (buses >80 m off their line); recurring
-    clusters pinpoint exactly which segments the drawn map is missing.
+    geometry so Erik hand-finishes branches, vs a fuller algorithmic finish.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.

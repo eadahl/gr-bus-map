@@ -39,3 +39,6 @@ data/routes-merged-spread-debug.geojson
 # always growing; we commit only the DERIVED route geometry, not the raw log
 # (same "parse once, commit static" rule as the GTFS source).
 data/vehicle-log.ndjson
+
+# Derived coverage-gap report from scripts/find-coverage-gaps.mjs (regenerable).
+data/coverage-gaps.geojson
