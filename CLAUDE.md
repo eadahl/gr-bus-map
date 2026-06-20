@@ -304,8 +304,18 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     base head-to-head (GTFS vs KML vs reconstructed GPS), then decide how the winning base reaches the
     screen: enrich the editor's starting geometry for hand-finish, vs a fuller algorithmic finish.
     Re-run reconstruct on a fuller (weekday + weekend) log first; several routes (3, 24, 44, 51, ...)
-    had <3 trips in the weekend sample. (4 = separate track) reliability/on-time/ghost-bus/crowding,
-    powered by StopDepartures + the Vehicles crowding fields.
+    had <3 trips in the weekend sample.
+  - [DONE] STEP 2c: reliability sampler. `scripts/collect-reliability.mjs` rotates through the 270
+    TIMEPOINT stops (IsTimePoint), one StopDepartures call every ~2.5s (~11 min/cycle), and logs each
+    departure's schedule-vs-actual to data/reliability-log.ndjson (gitignored): sched (SDT), est (EDT),
+    act (ADT, null until done), `dev` (HH:MM:SS, populated LIVE here unlike the vehicle feed), done,
+    status. Keeps completed OR next-hour departures (drops far-future); dedups ~2 rows/departure
+    (upcoming + completed). Foundation of the reliability/on-time/ghost-bus track: on-time perf
+    (sched vs act), prediction accuracy (est vs act), ghost/missed trips (seen upcoming, never
+    completed). Run: `node scripts/collect-reliability.mjs`.
+  - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
+    occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
+    ride on the Vehicles `occ` field (pending: is it ever non-zero?).
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
