@@ -81,7 +81,7 @@
         </div>
       </div>
 
-      <div class="sec">route reliability <span class="muted">(late share, accumulated this session · click to pin a route everywhere)</span></div>
+      <div class="sec">route reliability <span class="muted">(late share, from the accumulated GPS log · click to pin a route everywhere)</span></div>
       <div class="card"><div id="rank-rows" class="muted">accumulating...</div></div>
 
       <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
@@ -144,7 +144,6 @@
     // a single highlight applied across every panel (beeswarm, fleet map, table, tracks, ranking).
     let pinnedRoute = null, hoverRoute = null;
     const activeRoute = () => hoverRoute || pinnedRoute;
-    const routeStatus = {}; // routeId -> {ontime, late} accumulated this session (for the ranking)
     function setHover(r) { if (hoverRoute === r) return; hoverRoute = r; applyHighlight(); }
     function setPin(r) { pinnedRoute = (pinnedRoute === r) ? null : r; applyHighlight(); }
     function applyHighlight() {
@@ -356,8 +355,7 @@
           occ: b.OccupancyStatusReportLabel, status: b.OpStatus, stopId: b.StopId, lastStop: b.LastStop, comm: b.CommStatus, gps: b.GPSStatus,
           stopped, atStop: !!(near && near.d <= AT_STOP_M), near, lat: b.Latitude, lon: b.Longitude };
       });
-      for (const b of fleet) { if (b.status==='ONTIME'||b.status==='LATE') { const s=routeStatus[b.route]=routeStatus[b.route]||{ontime:0,late:0}; s[b.status==='LATE'?'late':'ontime']++; } }
-      renderStats(); renderFleet(); renderVisuals(); renderRanking();
+      renderStats(); renderFleet(); renderVisuals();
       document.getElementById('fleetnote').textContent = '· ' + fleet.length + ' buses · updated ' + new Date().toLocaleTimeString();
     }
     function renderStats() {
@@ -460,13 +458,19 @@
       onHover('#fleet tbody', e=>{ const tr=e.target.closest('tr'); return tr?tr.dataset.route:undefined; });
       onHover('#rank-rows', e=>{ const row=e.target.closest('.rrow'); return row?row.dataset.route:undefined; });
     }
-    function renderRanking() {
-      const el=document.getElementById('rank-rows'); if(!el)return;
-      const rows=Object.entries(routeStatus).map(([r,v])=>({r,n:v.ontime+v.late,late:(v.ontime+v.late)?v.late/(v.ontime+v.late):0}))
-        .filter(x=>x.n>=5).sort((a,b)=>b.late-a.late);
-      if(!rows.length){ el.textContent='accumulating...'; return; }
+    // Late share per route from the ACCUMULATED log (not the session) so the ranking
+    // is day-scale and stable. Drawn routes only (drops hidden 9999 etc.), min sample.
+    async function renderRanking() {
+      const el=document.getElementById('rank-rows'); if(!el||!routesFinal)return;
+      let log; try { log=await loadLog(); } catch { return; }
+      const drawn=new Set(routesFinal.features.filter(f=>!f.properties.kind).map(f=>String(f.properties.routeId)));
+      const tally={};
+      for (const o of log) { const r=String(o.routeId); if(!drawn.has(r)) continue;
+        if(o.status!=='ONTIME'&&o.status!=='LATE') continue; const t=tally[r]=tally[r]||{n:0,late:0}; t.n++; if(o.status==='LATE')t.late++; }
+      const rows=Object.entries(tally).map(([r,v])=>({r,n:v.n,late:v.late/v.n})).filter(x=>x.n>=20).sort((a,b)=>b.late-a.late);
+      if(!rows.length){ el.textContent='loading log...'; return; }
       el.innerHTML = rows.map(x=>{ const col=(routes[x.r]||{}).color||'#888', nm=(routes[x.r]||{}).long||'', pct=Math.round(x.late*100);
-        return `<div class="rrow" data-route="${x.r}"><span class="rsw" style="background:${col}"></span><span class="rnm">${x.r}${nm?' · '+nm:''}</span><span class="rbarwrap"><span class="rbar" style="width:${pct}%;background:${col}"></span></span><span class="rpct">${pct}%</span></div>`; }).join('');
+        return `<div class="rrow" data-route="${x.r}" title="${x.n} readings"><span class="rsw" style="background:${col}"></span><span class="rnm">${x.r}${nm?' · '+nm:''}</span><span class="rbarwrap"><span class="rbar" style="width:${pct}%;background:${col}"></span></span><span class="rpct">${pct}%</span></div>`; }).join('');
       applyHighlight();
     }
 
@@ -475,7 +479,8 @@
       tickClock(); setInterval(tickClock, 1000);
       wireBeeswarm(); wirePanels();
       await loadStatic();
-      await pollLogs(); await pollFleet(); await pollReliability();
+      await pollLogs(); await pollFleet(); await pollReliability(); renderRanking();
+      setInterval(renderRanking, 30000);
       setInterval(pollLogs, 5000);
       setInterval(pollFleet, 8000);
       setInterval(pollReliability, 15000);
