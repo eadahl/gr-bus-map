@@ -52,6 +52,9 @@
       </div>
     </div>
 
+    <div class="sec">deviation beeswarm <span class="muted" id="beenote"></span></div>
+    <div class="card" style="margin-bottom:6px"><svg id="beeswarm" width="100%" viewBox="0 0 1000 230" style="display:block"></svg></div>
+
     <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
     <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
   </div>
@@ -117,6 +120,58 @@
       const cur = vals.length ? vals[vals.length-1] : '-';
       return `<div><div class="k">${label}: <b style="color:var(--ink)">${cur}</b></div>
         <svg width="${W}" height="${H}" style="display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2"/></svg></div>`;
+    }
+
+    function devMin(s) {
+      if (!s) return null;
+      const m = /(-?)(\d+):(\d+):(\d+)/.exec(String(s));
+      if (!m) return null;
+      return (m[1] ? -1 : 1) * ((+m[2]) * 3600 + (+m[3]) * 60 + (+m[4])) / 60;
+    }
+
+    // Read the reliability log, take recent observations, keep the latest dev per
+    // departure, and plot the system's current deviation as a beeswarm.
+    async function pollReliability() {
+      let txt;
+      try { txt = await (await fetch('./data/reliability-log.ndjson?_=' + Date.now())).text(); }
+      catch { document.getElementById('beenote').textContent = '· no log file'; return; }
+      const now = Date.now(), latest = new Map();
+      for (const ln of txt.trim().split('\n')) {
+        if (!ln) continue;
+        let r; try { r = JSON.parse(ln); } catch { continue; }
+        if (r.t < now - 15 * 60000) continue;          // recent observations only
+        const k = r.route + '|' + r.trip + '|' + r.stop;
+        const p = latest.get(k);
+        if (!p || r.t > p.t) latest.set(k, r);          // newest reading per departure
+      }
+      const obs = [...latest.values()].map(r => ({ dev: devMin(r.dev), route: String(r.route), done: r.done }))
+        .filter(o => o.dev != null);
+      const devs = obs.map(o => o.dev).sort((a, b) => a - b);
+      const med = devs.length ? devs[Math.floor(devs.length / 2)] : 0;
+      const late = obs.filter(o => o.dev >= 1).length;
+      const acts = obs.filter(o => o.done).length;
+      document.getElementById('beenote').textContent =
+        `· ${obs.length} recent departures · median ${med.toFixed(1)} min · ${obs.length ? Math.round(late/obs.length*100) : 0}% ≥1 min late · ${acts} actuals`;
+      renderBeeswarm(obs);
+    }
+
+    function renderBeeswarm(obs) {
+      const W = 1000, H = 230, padL = 16, padR = 16, padB = 30, padT = 14, MAXD = 15;
+      const x = d => padL + (Math.min(MAXD, Math.max(0, d)) / MAXD) * (W - padL - padR);
+      const baseY = H - padB;
+      const bins = {};
+      for (const o of obs) { const b = Math.round(o.dev / 0.5); (bins[b] = bins[b] || []).push(o); }
+      let dots = '';
+      for (const b in bins) {
+        const arr = bins[b], cx = x(b * 0.5);
+        arr.forEach((o, i) => { const cy = baseY - 3 - i * 5.2; if (cy < padT) return;
+          dots += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.6" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9"/>`; });
+      }
+      let ax = '';
+      [0,5,10,15].forEach(t => { const xx = x(t);
+        ax += `<line x1="${xx}" y1="${padT}" x2="${xx}" y2="${baseY}" stroke="${t===0?'#bbb':'#eee'}" stroke-width="${t===0?1:0.5}"/>`+
+              `<text x="${xx}" y="${baseY+16}" text-anchor="middle" font-size="11" fill="#8a8a85">${t===0?'on time':t+' min'}</text>`; });
+      document.getElementById('beeswarm').innerHTML = ax + dots;
     }
 
     function renderVisuals() {
@@ -271,9 +326,10 @@
     (async () => {
       tickClock(); setInterval(tickClock, 1000);
       await loadStatic();
-      await pollLogs(); await pollFleet();
+      await pollLogs(); await pollFleet(); await pollReliability();
       setInterval(pollLogs, 5000);
       setInterval(pollFleet, 8000);
+      setInterval(pollReliability, 15000);
     })();
   </script>
 </body>

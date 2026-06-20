@@ -312,7 +312,12 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     status. Keeps completed OR next-hour departures (drops far-future); dedups ~2 rows/departure
     (upcoming + completed). Foundation of the reliability/on-time/ghost-bus track: on-time perf
     (sched vs act), prediction accuracy (est vs act), ghost/missed trips (seen upcoming, never
-    completed). Run: `node scripts/collect-reliability.mjs`.
+    completed). Run: `node scripts/collect-reliability.mjs`. FIX 2026-06-20: dedup key now includes
+    the dev MINUTE (`HH:MM`) so we re-log as predicted deviation evolves toward departure, not just
+    once at first sighting (which was logging mostly dev=0 far-out values). FINDINGS so far: dev is
+    one-sided (0..~15 min, NO early/negative buses); ACTUALS still elusive (0 done rows captured -
+    departures complete and drop off between ~11-min stop revisits, so the beeswarm currently shows
+    PREDICTED dev, not actual; faster revisit or a completion-catch strategy is a later fix).
   - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
     occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
     ride on the Vehicles `occ` field (pending: is it ever non-zero?).

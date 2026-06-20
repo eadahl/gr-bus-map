@@ -70,7 +70,11 @@ async function pollStop(stopId) {
         const done = !!d.IsCompleted;
         if (!done && !(sched && sched <= now + NEAR_MS)) continue; // skip far-future
         const act = parseAspNetDate(d.ADT);
-        const key = `${stopId}|${d.Trip}|${sched}|${done ? 1 : 0}|${act || ''}`;
+        // Include the dev MINUTE in the dedup key so we re-log as the predicted
+        // deviation evolves toward departure (not just once at first sighting),
+        // and on completion (done/act change). 1-min granularity keeps it bounded.
+        const devMinB = d.Dev ? String(d.Dev).slice(0, 5) : '';
+        const key = `${stopId}|${d.Trip}|${sched}|${done ? 1 : 0}|${act || ''}|${devMinB}`;
         if (seen.has(key)) continue;
         seen.add(key);
         lines.push(JSON.stringify({
