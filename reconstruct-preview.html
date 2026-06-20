@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Reconstructed routes (from accumulated GPS) - preview</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+    .panel {
+      position: absolute; top: 12px; left: 12px; z-index: 1;
+      font: 12px/1.5 ui-monospace, 'IBM Plex Mono', Menlo, monospace;
+      color: #111; background: #fff; border: 1px solid #111; border-radius: 2px;
+      padding: 8px 10px; max-width: 300px;
+    }
+    .panel b { font-weight: 600; }
+    .panel button { font: inherit; cursor: pointer; margin: 2px 0; padding: 3px 7px;
+      border: 1px solid #111; background: #fff; border-radius: 2px; }
+    .panel button.off { opacity: 0.45; }
+    .row { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+    .sw { width: 22px; height: 0; border-top-width: 3px; border-top-style: solid; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <b>Reconstructed vs drawn</b><br />
+    Colored lines = patterns rebuilt from real bus GPS.<br />
+    <div class="row"><span class="sw" style="border-color:#111"></span> reconstructed (median of trips)</div>
+    <div class="row"><span class="sw" style="border-color:#bbb;border-top-style:dashed"></span> current drawn map (reference)</div>
+    <div class="row"><span style="color:#e8413a">●</span> coverage-gap clusters (sized by trips)</div>
+    <div style="margin-top:8px">
+      <button id="t-current">current map: on</button>
+      <button id="t-gaps">gaps: on</button>
+    </div>
+  </div>
+
+  <script>
+    const POSITRON = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const FALLBACK = { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#fafafa' } }] };
+    const GR = [-85.6681, 42.9634];
+    let map;
+
+    function addLayers() {
+      if (!map || map.getSource('recon')) return;
+      try {
+        map.addSource('current', { type: 'geojson', data: './data/routes-final.geojson' });
+        map.addSource('recon', { type: 'geojson', data: './data/routes-reconstructed-debug.geojson' });
+        map.addSource('gaps', { type: 'geojson', data: './data/coverage-gaps.geojson' });
+      } catch (e) { return; }
+
+      const onlyLines = ['!', ['has', 'kind']];
+
+      // current drawn map: faint dashed grey reference
+      map.addLayer({
+        id: 'current-line', type: 'line', source: 'current', filter: onlyLines,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#bbbbbb', 'line-width': 1.5, 'line-dasharray': [2, 2] },
+      });
+
+      // reconstructed: white casing + route color, full strength
+      map.addLayer({
+        id: 'recon-casing', type: 'line', source: 'recon',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#fff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 7, 18, 13] },
+      });
+      map.addLayer({
+        id: 'recon-line', type: 'line', source: 'recon',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 14, 4, 18, 9] },
+      });
+
+      // coverage-gap clusters: red dots sized by how many trips hit them
+      map.addLayer({
+        id: 'gaps-dot', type: 'circle', source: 'gaps',
+        paint: {
+          'circle-color': '#e8413a', 'circle-opacity': 0.55,
+          'circle-radius': ['interpolate', ['linear'], ['get', 'trips'], 1, 3, 12, 11],
+          'circle-stroke-color': '#fff', 'circle-stroke-width': 1,
+        },
+      });
+    }
+
+    function build(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GR, zoom: 11 });
+      map.on('styledata', addLayers);
+      map.on('load', addLayers);
+    }
+    build(POSITRON);
+    let fellBack = false;
+    const wd = setTimeout(() => { if (!fellBack && !map.isStyleLoaded()) { fellBack = true; map.remove(); build(FALLBACK); } }, 5000);
+    const iv = setInterval(() => { addLayers(); if (map.getSource('recon')) { clearInterval(iv); clearTimeout(wd); } }, 300);
+
+    // toggles
+    function toggle(id, layers, btn) {
+      let on = true;
+      document.getElementById(btn).addEventListener('click', (e) => {
+        on = !on;
+        for (const l of layers) if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', on ? 'visible' : 'none');
+        e.target.textContent = `${id}: ${on ? 'on' : 'off'}`;
+        e.target.classList.toggle('off', !on);
+      });
+    }
+    toggle('current map', ['current-line'], 't-current');
+    toggle('gaps', ['gaps-dot'], 't-gaps');
+  </script>
+</body>
+</html>

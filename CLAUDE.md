@@ -256,11 +256,31 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     positions) already surfaced: routes 15+6 ~424 m off SW of the hub by the river (matches the
     known "river crossing" parked refinement), route 3 -> Target-RiverTown branch, route 51/DASH
     loop variant. Sample needs a full service week to be representative.
-  - NEXT STEPS (not built yet): (2) reconstruct - group the log by tripId, order by fixTime ->
-    actual traveled polylines; cluster into distinct patterns per route+direction (the branches);
-    map-match each with the existing match-routes machinery (dense ordered GPS is a BETTER input
-    than one GTFS shape). (3) Decide how patterns reach the screen: enrich the editor's starting
-    geometry so Erik hand-finishes branches, vs a fuller algorithmic finish.
+  - [DONE] STEP 1c: gap classification. find-coverage-gaps.mjs now tracks distinct trips/vehicles/
+    time per cluster and splits SYSTEMATIC (>=3 distinct trips: real branches/detours) vs ONE-OFF
+    (1 trip: GPS glitch / deadhead / layover). On ~9 h of data: 70% of off-route points are
+    systematic, concentrated on undrawn southern branches (10/3 Pine Rest + Target-Rivertown, 1/24
+    UM Health West). Caveat baked into the tool's framing: "off route" = off the line WE DREW, not
+    off the bus's scheduled route; most flags are our map being incomplete, not buses deviating.
+  - [DONE] STEP 2: reconstructor, FIRST PASS. `scripts/reconstruct-routes.mjs` (1) groups the log by
+    (routeId, tripId) ordered by fixTime, (2) cleans each trip (dedup <8 m, drop >1500 m teleports,
+    require >=6 pts and >=800 m), (3) clusters trips within (routeId, dir) into patterns by grid-
+    signature Jaccard overlap (seed = longest trip, join if >=0.5; a divergent path = a branch), (4)
+    builds ONE centerline per pattern = per-point MEDIAN of arc-length-resampled member trips (many
+    overlapping runs average out GPS noise). Keeps patterns with >=3 trips (no one-offs). Stops
+    BEFORE map-matching on purpose (first pass = validate grouping/clustering). On ~9 h: 132 usable
+    trips -> 28 patterns across 15 routes; branches appeared exactly as predicted (1 -> UM Health
+    West, 8 -> Target-Rivertown, 10 -> Pine Rest). Output data/routes-reconstructed-debug.geojson
+    (GITIGNORED). View `reconstruct-preview.html` (reconstructed colored lines + faint current map +
+    red gap dots sized by trips): the reconstructed lines run right through the gap clusters and
+    extend past where the drawn map stops. Lines wobble (raw-GPS median, pre-map-match) = expected.
+    Run: `node scripts/reconstruct-routes.mjs`. Tunables at top (MIN_PATTERN_TRIPS, SIM_THRESHOLD,
+    resample N). Directions kept SEPARATE for now (agreed).
+  - NEXT STEPS (not built yet): (2b) map-match the reconstructed patterns onto OSM roads with the
+    existing match-routes machinery (dense ordered GPS is a BETTER input than one GTFS shape), which
+    also removes the wobble. (3) Decide how patterns reach the screen: enrich the editor's starting
+    geometry so Erik hand-finishes branches, vs a fuller algorithmic finish. Re-run on a fuller
+    (weekday + weekend) log first; several routes (3, 24, 44, 51, ...) had <3 trips this sample.
 - [ ] **3. Calm motion.** Interpolate bus position between polls so they glide.
 - [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.

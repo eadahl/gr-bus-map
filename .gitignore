@@ -42,3 +42,4 @@ data/vehicle-log.ndjson
 
 # Derived coverage-gap report from scripts/find-coverage-gaps.mjs (regenerable).
 data/coverage-gaps.geojson
+data/routes-reconstructed-debug.geojson
