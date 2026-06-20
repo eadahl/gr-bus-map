@@ -163,10 +163,13 @@
       const thead = document.querySelector('#fleet thead');
       thead.innerHTML = '<tr>' + COLS.map(([k,l]) => `<th data-k="${k}">${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`).join('') + '</tr>';
       thead.querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (sortKey===k) sortDir*=-1; else { sortKey=k; sortDir=1; } renderFleet(); });
+      const num = (x) => (x !== '' && x != null && !isNaN(x)) ? Number(x) : null;
       const rows = [...fleet].sort((a,b) => {
-        const ka = sortKey==='state' ? (a.atStop?2:a.stopped?1:0) : a[sortKey];
-        const kb = sortKey==='state' ? (b.atStop?2:b.stopped?1:0) : b[sortKey];
-        return (ka>kb?1:ka<kb?-1:0) * sortDir;
+        let ka = sortKey==='state' ? (a.atStop?2:a.stopped?1:0) : a[sortKey];
+        let kb = sortKey==='state' ? (b.atStop?2:b.stopped?1:0) : b[sortKey];
+        const na = num(ka), nb = num(kb);            // sort numbers as numbers (route 2 before 10)
+        if (na != null && nb != null) return (na - nb) * sortDir;
+        return String(ka ?? '').localeCompare(String(kb ?? '')) * sortDir;
       });
       document.querySelector('#fleet tbody').innerHTML = rows.map(b => {
         const col = (routes[b.route]||{}).color || '#888';

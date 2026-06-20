@@ -187,6 +187,23 @@
       // reads on top of the route lines. Added with no beforeId so the dots sit
       // ABOVE everything, labels included: the buses are the point of the map.
       map.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+      // At-stop halo: a soft route-colored ring UNDER the dot, shown only for a bus
+      // dwelling at a designated stop (speed ~0 near a stop). It pulses (animated in
+      // the frame loop) to read like doors opening, people on and off. Added before
+      // the dot layer so the dot sits on top. Initial paint shows even if rAF is idle.
+      map.addLayer({
+        id: 'vehicles-halo',
+        type: 'circle',
+        source: 'vehicles',
+        filter: ['==', ['get', 'atStop'], true],
+        paint: {
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.3,
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 7, 14, 13, 18, 24],
+        },
+      });
+
       map.addLayer({
         id: 'vehicles',
         type: 'circle',
@@ -298,6 +315,20 @@
     const SNAP_MAX_M = 80;
     const M_PER_DEG = 111320; // meters per degree, good enough at this latitude
 
+    // "At a stop": a stopped bus (speed ~0) within this distance of a known stop is
+    // dwelling (doors open), vs stopped at a light. Stop locations are loaded once.
+    const AT_STOP_M = 40;
+    let stopsArr = []; // [[lng,lat], ...] from GetAllStops
+    function nearStop(p) {
+      const thr2 = (AT_STOP_M / M_PER_DEG) ** 2;
+      const px = p[0] * COS_LAT, py = p[1];
+      for (const s of stopsArr) {
+        const dx = px - s[0] * COS_LAT, dy = py - s[1];
+        if (dx * dx + dy * dy <= thr2) return true; // first hit is enough
+      }
+      return false;
+    }
+
     // Ray-casting point-in-polygon. pt and ring vertices are [lng, lat].
     function pointInRing(pt, ring) {
       if (!ring) return false;
@@ -343,10 +374,11 @@
         const distM = best ? Math.sqrt(best.dist2) * M_PER_DEG : Infinity;
         const onRoute = best && distM <= SNAP_MAX_M;
         const to = onRoute ? best.point : raw;
+        const atStop = (v.speed || 0) === 0 && stopsArr.length > 0 && nearStop(raw);
         const prev = anim.get(id);
         anim.set(id, {
           from: prev ? curPos(prev, now) : to,   // ease out from where it is right now
-          to, start: now, color, anomaly: !onRoute, bearing: v.heading ?? 0, route,
+          to, start: now, color, anomaly: !onRoute, atStop, bearing: v.heading ?? 0, route,
         });
         live.add(id);
       }
@@ -364,12 +396,24 @@
         features.push({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: curPos(a, now) },
-          properties: { color: a.color, route: a.route, anomaly: a.anomaly, bearing: a.bearing },
+          properties: { color: a.color, route: a.route, anomaly: a.anomaly, atStop: a.atStop, bearing: a.bearing },
         });
       }
       src.setData({ type: 'FeatureCollection', features });
     }
-    function frame() { draw(performance.now()); requestAnimationFrame(frame); }
+    // Pulse the at-stop halo: a gentle sine breathing so dwelling buses softly
+    // throb (doors open) rather than sit static. Calm amplitude on purpose.
+    function frame() {
+      const now = performance.now();
+      draw(now);
+      if (map && map.getLayer && map.getLayer('vehicles-halo')) {
+        const k = 1 + 0.22 * Math.sin(now / 500);
+        map.setPaintProperty('vehicles-halo', 'circle-opacity', 0.3 + 0.14 * Math.sin(now / 500));
+        map.setPaintProperty('vehicles-halo', 'circle-radius',
+          ['interpolate', ['linear'], ['zoom'], 10, 7 * k, 14, 13 * k, 18, 24 * k]);
+      }
+      requestAnimationFrame(frame);
+    }
     requestAnimationFrame(frame);
 
     // Build the color/hub lookups from the drawn geometry, then poll those exact
@@ -394,6 +438,12 @@
       }
       const ids = Object.keys(colorById);
       if (!ids.length) return;
+      // Stop locations for the at-stop test (loaded once; CORS open). If it fails,
+      // at-stop simply never triggers and the halo never shows. Non-blocking.
+      fetch('https://connect.ridetherapid.org/InfoPoint/rest/Stops/GetAllStops')
+        .then((r) => r.json())
+        .then((s) => { stopsArr = s.filter((x) => x.Latitude != null).map((x) => [x.Longitude, x.Latitude]); })
+        .catch((e) => console.warn('stops load failed (at-stop disabled)', e));
       pollVehicles(ids, renderVehicles, {
         intervalMs: 10000,
         onError: (e) => console.warn('vehicle poll failed', e),
