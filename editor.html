@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GR Bus Map: line editor (hand-finish)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+    .panel { position: absolute; z-index: 1; font: 12px/1.45 ui-monospace, 'IBM Plex Mono', SFMono-Regular, Menlo, monospace; letter-spacing: 0.02em; color: #111; background: #fff; border: 1px solid #111; border-radius: 2px; }
+    #controls { top: 12px; left: 12px; padding: 10px 12px; width: 250px; }
+    #controls h1 { font-size: 12px; margin: 0 0 8px; letter-spacing: 0.06em; text-transform: uppercase; }
+    #controls select, #controls button { font: inherit; color: inherit; background: #fff; border: 1px solid #111; border-radius: 2px; padding: 4px 6px; cursor: pointer; }
+    #controls select { width: 100%; margin-bottom: 8px; }
+    #controls button { margin: 0 4px 4px 0; }
+    #controls button:hover { background: #111; color: #fff; }
+    #controls .hint { color: #555; margin-top: 8px; }
+    #controls .hint b { color: #111; }
+    #status { margin-top: 8px; min-height: 1.4em; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border: 1px solid #111; vertical-align: middle; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="controls" class="panel">
+    <h1>Line editor</h1>
+    <select id="route"></select>
+    <div>
+      <button id="straighten">Straighten</button>
+      <button id="smooth">Smooth</button>
+    </div>
+    <div>
+      <button id="export">Export overrides</button>
+      <button id="revert">Revert route</button>
+      <button id="clear-local">Clear local</button>
+    </div>
+    <div id="status"></div>
+    <div class="hint">
+      <b>Click</b> a line to select. <b>Drag</b> a dot to move it.
+      <b>Click the line</b> between dots to add one.<br>
+      <b>Shift-drag</b> a box to select many dots (or <b>Shift-click</b> dots); drag any one to move them together. <b>Delete</b> (or right-click) removes the selected dots. <b>Esc</b> clears.<br>
+      With dots selected, <b>Straighten</b> snaps them to a line between the ends; <b>Smooth</b> rounds out jitter (click again for more).<br>
+      Edits auto-save in this browser as you go (survives reloads). <b>Export</b> downloads <code>route-overrides.geojson</code> to commit into <code>data/</code> for the durable save. <b>Clear local</b> discards un-exported local edits.
+    </div>
+  </div>
+  <script>
+    // Positron: the deployed map's own basemap. It is near-white / desaturated, so
+    // route colors stand out, and editing on it previews the real final composition.
+    const BASEMAP = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const FALLBACK = { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#fafafa' } }] };
+
+    // Exact line styling the deployed map uses (index.html), so the selected route
+    // renders here at its true final width and casing.
+    const CASING_WIDTH = ['interpolate', ['linear'], ['zoom'], 10, 3.5, 14, 6.5, 18, 13];
+    const COLOR_WIDTH = ['interpolate', ['linear'], ['zoom'], 10, 1.6, 14, 3.6, 18, 8.5];
+    const GR = [-85.6681, 42.9634];
+    const PROPOSED_URL = './data/routes-merged-spread-debug.geojson';
+    const OVERRIDES_URL = './data/route-overrides.geojson';
+
+    let map;
+    const statusEl = document.getElementById('status');
+    const routeSel = document.getElementById('route');
+    const setStatus = (m) => { statusEl.textContent = m; };
+
+    // Per-route geometry as { color, parts: [ [ [lng,lat], ... ], ... ] }.
+    const proposed = new Map();   // algorithm output (context)
+    const overrides = new Map();  // hand edits, keyed by routeId
+    let selected = null;          // routeId being edited
+    let working = null;           // deep copy of selected route's parts during edit
+    let drag = null;              // { last: LngLat } while dragging vertices
+    let box = null;               // { startPx } while rubber-band selecting
+    const vsel = new Set();       // multi-selected vertex keys "part:idx" on this route
+    const vkey = (p, i) => `${p}:${i}`;
+
+    const clone = (parts) => parts.map((p) => p.map((c) => [c[0], c[1]]));
+    const current = (id) => overrides.get(id) || proposed.get(id);
+
+    // Persistence. Edits live in `overrides`; we mirror them to localStorage on every
+    // change so a reload or crash never loses in-progress work (the browser keeps it).
+    // Export writes the same data to a file you commit into data/ for the durable,
+    // version-controlled save. localStorage is per-browser and not committed.
+    const LS_KEY = 'gr-bus-overrides-v1';
+    function overridesToFeatures() {
+      const features = [];
+      for (const [id, g] of overrides) {
+        features.push({ type: 'Feature', properties: { routeId: id, color: g.color }, geometry: g.parts.length === 1 ? { type: 'LineString', coordinates: g.parts[0] } : { type: 'MultiLineString', coordinates: g.parts } });
+      }
+      return features;
+    }
+    function setOverridesFrom(fc) {
+      for (const f of (fc && fc.features) || []) {
+        const g = f.geometry;
+        const parts = g.type === 'MultiLineString' ? g.coordinates : [g.coordinates];
+        overrides.set(f.properties.routeId, { color: f.properties.color || '#111', parts: parts.map((p) => p.map((c) => [c[0], c[1]])) });
+      }
+    }
+    const saveLocal = () => { try { localStorage.setItem(LS_KEY, JSON.stringify({ type: 'FeatureCollection', features: overridesToFeatures() })); } catch (e) {} };
+
+    function groupByRoute(fc, into) {
+      for (const f of fc.features || []) {
+        const id = f.properties.routeId;
+        const color = f.properties.color || '#111';
+        const g = f.geometry;
+        const parts = g.type === 'MultiLineString' ? g.coordinates : [g.coordinates];
+        if (!into.has(id)) into.set(id, { color, parts: [] });
+        for (const part of parts) into.get(id).parts.push(part);
+      }
+    }
+
+    // --- GeoJSON the layers read ----------------------------------------------
+    function allFC() {
+      const features = [];
+      for (const [id] of proposed) {
+        if (id === selected) continue; // selected route is drawn full-style by the sel-* layers
+        const g = current(id);
+        if (!g) continue;
+        features.push({ type: 'Feature', properties: { routeId: id, color: g.color }, geometry: { type: 'MultiLineString', coordinates: g.parts } });
+      }
+      return { type: 'FeatureCollection', features };
+    }
+    function selLineFC() {
+      if (!working) return { type: 'FeatureCollection', features: [] };
+      const color = current(selected) ? current(selected).color : '#111';
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { color }, geometry: { type: 'MultiLineString', coordinates: working } }] };
+    }
+    function selVertFC() {
+      const features = [];
+      if (working) working.forEach((part, pi) => part.forEach((c, i) => features.push({ type: 'Feature', properties: { part: pi, idx: i, sel: vsel.has(vkey(pi, i)) }, geometry: { type: 'Point', coordinates: c } })));
+      return { type: 'FeatureCollection', features };
+    }
+    const refreshVerts = () => { if (map && map.getSource('selv')) map.getSource('selv').setData(selVertFC()); };
+    const refresh = () => {
+      if (!map || !map.getSource('all')) return; // layers not added yet
+      map.getSource('all').setData(allFC());
+      map.getSource('sel').setData(selLineFC());
+      map.getSource('selv').setData(selVertFC());
+    };
+
+    // --- Selection ------------------------------------------------------------
+    function select(id) {
+      selected = id;
+      working = current(id) ? clone(current(id).parts) : null;
+      vsel.clear();
+      routeSel.value = id;
+      refresh();
+      setStatus(`route ${id}: ${working ? working.reduce((n, p) => n + p.length, 0) : 0} points${overrides.has(id) ? ' (overridden)' : ''}`);
+    }
+    function commit() {
+      if (!selected || !working) return;
+      overrides.set(selected, { color: current(selected).color, parts: clone(working) });
+      saveLocal();
+      refreshRouteOptions();
+      refresh();
+      setStatus(`route ${selected}: edited — auto-saved locally (Export to commit)`);
+    }
+    // Delete the given vertex keys ("part:idx"). Splices bottom-up per part so the
+    // indices stay valid, and never lets a line drop below 2 points.
+    function deleteVerts(keys) {
+      if (!working || !keys.length) return;
+      const byPart = new Map();
+      for (const k of keys) { const [p, i] = k.split(':').map(Number); if (!byPart.has(p)) byPart.set(p, []); byPart.get(p).push(i); }
+      let kept = 0, removed = 0;
+      for (const [p, idxs] of byPart) {
+        if (working[p].length - idxs.length < 2) { kept += idxs.length; continue; }
+        idxs.sort((a, b) => b - a).forEach((i) => working[p].splice(i, 1));
+        removed += idxs.length;
+      }
+      vsel.clear();
+      commit();
+      if (kept) setStatus(`deleted ${removed}; kept ${kept} (a line needs at least 2 points)`);
+    }
+
+    // Selected vertex indices grouped by part: Map(part -> [idx,...] ascending).
+    function selectedByPart() {
+      const m = new Map();
+      for (const k of vsel) { const [p, i] = k.split(':').map(Number); if (!m.has(p)) m.set(p, []); m.get(p).push(i); }
+      for (const idxs of m.values()) idxs.sort((a, b) => a - b);
+      return m;
+    }
+    // Straighten: snap the selected run onto the straight line between its endpoints.
+    function straighten() {
+      const groups = selectedByPart();
+      if (![...groups.values()].some((g) => g.length >= 3)) { setStatus('select 3+ dots in a row to straighten'); return; }
+      for (const [p, idxs] of groups) {
+        if (idxs.length < 3) continue;
+        const a = working[p][idxs[0]], b = working[p][idxs[idxs.length - 1]];
+        const vx = b[0] - a[0], vy = b[1] - a[1];
+        const len2 = vx * vx + vy * vy || 1e-12;
+        for (let k = 1; k < idxs.length - 1; k++) {
+          const c = working[p][idxs[k]];
+          const t = ((c[0] - a[0]) * vx + (c[1] - a[1]) * vy) / len2;
+          working[p][idxs[k]] = [a[0] + t * vx, a[1] + t * vy];
+        }
+      }
+      commit();
+      setStatus('straightened the selection');
+    }
+    // Smooth: one 1-2-1 averaging pass over the selected dots (endpoints stay put).
+    // Click again for more smoothing.
+    function smoothSel() {
+      const groups = selectedByPart();
+      if (![...groups.values()].some((g) => g.length >= 3)) { setStatus('select 3+ dots to smooth'); return; }
+      for (const [p, idxs] of groups) {
+        const orig = working[p].map((c) => [c[0], c[1]]);
+        for (const i of idxs) {
+          if (i === 0 || i === working[p].length - 1) continue;
+          working[p][i] = [(orig[i - 1][0] + 2 * orig[i][0] + orig[i + 1][0]) / 4, (orig[i - 1][1] + 2 * orig[i][1] + orig[i + 1][1]) / 4];
+        }
+      }
+      commit();
+      setStatus('smoothed the selection');
+    }
+
+    // --- Geometry helpers (lng/lat, local plane is fine at city scale) ---------
+    function nearestSegment(parts, lngLat) {
+      let best = { d: Infinity, part: 0, seg: 0 };
+      const P = [lngLat.lng, lngLat.lat];
+      parts.forEach((part, pi) => {
+        for (let i = 0; i < part.length - 1; i++) {
+          const a = part[i], b = part[i + 1];
+          const vx = b[0] - a[0], vy = b[1] - a[1];
+          const len2 = vx * vx + vy * vy || 1e-12;
+          let t = ((P[0] - a[0]) * vx + (P[1] - a[1]) * vy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          const dx = P[0] - (a[0] + t * vx), dy = P[1] - (a[1] + t * vy);
+          const d = dx * dx + dy * dy;
+          if (d < best.d) best = { d, part: pi, seg: i };
+        }
+      });
+      return best;
+    }
+
+    // Vertex keys whose screen position falls inside the rubber-band rectangle.
+    function vertsInBox(a, b) {
+      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+      const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+      const keys = [];
+      if (working) working.forEach((part, pi) => part.forEach((c, i) => {
+        const p = map.project(c);
+        if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) keys.push(vkey(pi, i));
+      }));
+      return keys;
+    }
+    // Rubber-band rectangle (screen-space div over the map).
+    const band = document.createElement('div');
+    band.style.cssText = 'position:fixed;border:1px solid #111;background:rgba(17,17,17,0.06);pointer-events:none;display:none;z-index:2;';
+    document.body.appendChild(band);
+    function showBand(a, b) {
+      const r = map.getCanvas().getBoundingClientRect();
+      band.style.display = 'block';
+      band.style.left = (r.left + Math.min(a.x, b.x)) + 'px';
+      band.style.top = (r.top + Math.min(a.y, b.y)) + 'px';
+      band.style.width = Math.abs(a.x - b.x) + 'px';
+      band.style.height = Math.abs(a.y - b.y) + 'px';
+    }
+    const hideBand = () => { band.style.display = 'none'; };
+
+    // --- Map setup ------------------------------------------------------------
+    // Don't gate on isStyleLoaded(): a heavy basemap (or one glyph range that never
+    // resolves) can keep it false indefinitely while the style is perfectly usable.
+    // Instead just try to add; if the style isn't ready the addSource call throws
+    // and the retry interval calls us again.
+    function addLayers() {
+      if (!map || (map.getLayer && map.getLayer('all-line'))) return;
+      try {
+        map.addSource('all', { type: 'geojson', data: allFC() });
+        map.addSource('sel', { type: 'geojson', data: selLineFC() });
+        map.addSource('selv', { type: 'geojson', data: selVertFC() });
+      } catch (e) { return; }
+      // Context routes: colored at the deployed width, dimmed, no casing (lighter,
+      // so the route being edited stands out). The selected route is drawn in the
+      // EXACT deployed style (white casing + colored line at the real widths) so the
+      // editor previews the final render, with a thin dark guide + dots for editing.
+      map.addLayer({ id: 'all-line', type: 'line', source: 'all', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': COLOR_WIDTH, 'line-opacity': 0.45 } });
+      map.addLayer({ id: 'sel-casing', type: 'line', source: 'sel', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': CASING_WIDTH } });
+      map.addLayer({ id: 'sel-color', type: 'line', source: 'sel', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': COLOR_WIDTH } });
+      map.addLayer({ id: 'sel-guide', type: 'line', source: 'sel', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#111', 'line-width': 1, 'line-opacity': 0.5 } });
+      // Editing dots: filled black when selected, hollow otherwise. Hidden below
+      // zoom 15.5 (they would carpet the line and hide its final look) and shrunk a
+      // bit when zoomed further out, so zoomed out you see the true rendered route
+      // and zoomed in you get grabbable handles.
+      map.addLayer({ id: 'sel-verts', type: 'circle', source: 'selv', minzoom: 15.5, paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 15.5, 3, 18, 6.5],
+        'circle-color': ['case', ['get', 'sel'], '#111', '#fff'],
+        'circle-stroke-color': '#111', 'circle-stroke-width': 1.5 } });
+
+      const vertAt = (pt) => map.queryRenderedFeatures(pt, { layers: ['sel-verts'] })[0];
+
+      // Select a route by clicking its line (Shift is reserved for vertex selection).
+      map.on('click', 'all-line', (e) => {
+        if (drag || box || e.originalEvent.shiftKey) return;
+        select(e.features[0].properties.routeId);
+      });
+      // Insert a vertex by clicking the selected line away from a dot.
+      map.on('click', 'sel-color', (e) => {
+        if (!working || drag || box || e.originalEvent.shiftKey) return;
+        if (vertAt(e.point)) return;
+        const { part, seg } = nearestSegment(working, e.lngLat);
+        working[part].splice(seg + 1, 0, [e.lngLat.lng, e.lngLat.lat]);
+        commit();
+      });
+      // Right-click a dot to delete it (or the whole selection if it is part of one).
+      map.on('contextmenu', 'sel-verts', (e) => {
+        if (!working) return;
+        e.preventDefault();
+        const key = vkey(e.features[0].properties.part, e.features[0].properties.idx);
+        deleteVerts(vsel.has(key) ? [...vsel] : [key]);
+      });
+
+      // Mouse down decides: drag a dot (or the whole selection), or Shift-box-select.
+      map.on('mousedown', (e) => {
+        const vf = vertAt(e.point);
+        if (vf) {
+          const key = vkey(vf.properties.part, vf.properties.idx);
+          if (e.originalEvent.shiftKey) {            // toggle this dot in the selection
+            vsel.has(key) ? vsel.delete(key) : vsel.add(key);
+            refreshVerts();
+            e.preventDefault();
+            return;
+          }
+          if (!vsel.has(key)) { vsel.clear(); vsel.add(key); refreshVerts(); } // drag a fresh single
+          drag = { last: e.lngLat };
+          map.dragPan.disable();
+          e.preventDefault();
+          return;
+        }
+        if (e.originalEvent.shiftKey && working) {   // start a rubber-band box
+          box = { startPx: e.point };
+          showBand(e.point, e.point);
+          map.dragPan.disable();
+          e.preventDefault();
+        }
+      });
+      map.on('mousemove', (e) => {
+        if (box) { showBand(box.startPx, e.point); return; }
+        if (!drag) return;
+        const dLng = e.lngLat.lng - drag.last.lng;
+        const dLat = e.lngLat.lat - drag.last.lat;
+        for (const k of vsel) { const [p, i] = k.split(':').map(Number); working[p][i][0] += dLng; working[p][i][1] += dLat; }
+        drag.last = e.lngLat;
+        map.getSource('sel').setData(selLineFC());
+        refreshVerts();
+      });
+      map.on('mouseup', (e) => {
+        if (box) {
+          if (!e.originalEvent.shiftKey || true) vsel.clear();
+          for (const k of vertsInBox(box.startPx, e.point)) vsel.add(k);
+          hideBand();
+          box = null;
+          map.dragPan.enable();
+          refreshVerts();
+          setStatus(`${vsel.size} point(s) selected — drag one to move them together, right-click to delete`);
+          return;
+        }
+        if (drag) { drag = null; map.dragPan.enable(); commit(); }
+      });
+      // Keyboard: Delete/Backspace removes the selected dots, Esc clears the selection.
+      // Ignored while typing in the route dropdown so it never deletes unexpectedly.
+      window.addEventListener('keydown', (e) => {
+        if (/^(input|select|textarea)$/i.test(e.target.tagName)) return;
+        if (e.key === 'Escape') { vsel.clear(); refreshVerts(); }
+        else if ((e.key === 'Delete' || e.key === 'Backspace') && vsel.size) { e.preventDefault(); deleteVerts([...vsel]); }
+      });
+      const hover = (layer) => {
+        map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
+      };
+      hover('all-line'); hover('sel-verts');
+    }
+
+    // --- Controls -------------------------------------------------------------
+    function refreshRouteOptions() {
+      const ids = [...proposed.keys()].sort((a, b) => Number(a) - Number(b));
+      routeSel.innerHTML = '';
+      for (const id of ids) {
+        const o = document.createElement('option');
+        o.value = id;
+        o.textContent = `route ${id}${overrides.has(id) ? '  •' : ''}`;
+        routeSel.appendChild(o);
+      }
+      if (selected) routeSel.value = selected;
+    }
+    routeSel.addEventListener('change', () => select(routeSel.value));
+    document.getElementById('straighten').addEventListener('click', straighten);
+    document.getElementById('smooth').addEventListener('click', smoothSel);
+    document.getElementById('revert').addEventListener('click', () => {
+      if (selected && overrides.delete(selected)) { saveLocal(); refreshRouteOptions(); select(selected); setStatus(`route ${selected}: reverted to algorithm`); }
+    });
+    document.getElementById('clear-local').addEventListener('click', () => {
+      if (!confirm('Discard all local (un-exported) edits and reload from the committed file?')) return;
+      try { localStorage.removeItem(LS_KEY); } catch (e) {}
+      location.reload();
+    });
+    document.getElementById('export').addEventListener('click', () => {
+      const features = overridesToFeatures();
+      const fc = { type: 'FeatureCollection', note: 'Hand-finished route geometry. routeId replaces the algorithm line. Generated by editor.html.', features };
+      const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'route-overrides.geojson';
+      a.click();
+      setStatus(`exported ${features.length} overridden route(s) -> commit into data/`);
+    });
+
+    // --- Load data + boot -----------------------------------------------------
+    async function load() {
+      const [p, o] = await Promise.all([
+        fetch(PROPOSED_URL).then((r) => r.json()),
+        fetch(OVERRIDES_URL).then((r) => r.json()).catch(() => ({ features: [] })),
+      ]);
+      groupByRoute(p, proposed);
+      setOverridesFrom(o); // committed overrides file (durable baseline)
+      // Overlay locally auto-saved edits (the most recent in-progress work) on top.
+      let local = null;
+      try { local = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) {}
+      const localCount = local && local.features ? local.features.length : 0;
+      if (localCount) setOverridesFrom(local);
+      refreshRouteOptions();
+      refresh();
+      setStatus(`${proposed.size} routes, ${overrides.size} overridden${localCount ? ` (${localCount} restored from local auto-save)` : ''}`);
+    }
+
+    function build(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GR, zoom: 12 });
+      map.boxZoom.disable(); // Shift-drag is our box-select, not zoom-to-box
+      map.on('styledata', addLayers);
+      map.on('load', addLayers);
+    }
+    // Decide the basemap by actually fetching its style (not by racing a timeout
+    // against isStyleLoaded, which used to false-trip to a blank background), then
+    // retry addLayers until the route layers are in.
+    (async () => {
+      let style = BASEMAP;
+      try { const r = await fetch(BASEMAP); if (!r.ok) throw new Error('basemap unavailable'); } catch { style = FALLBACK; }
+      build(style);
+      load();
+      const retry = setInterval(() => { addLayers(); if (map.getLayer && map.getLayer('all-line')) clearInterval(retry); }, 250);
+    })();
+  </script>
+</body>
+</html>

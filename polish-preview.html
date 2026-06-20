@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GR Bus Map: polish pass preview</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+    .panel { position: absolute; z-index: 1; font: 12px/1.4 ui-monospace, 'IBM Plex Mono', monospace; letter-spacing: 0.02em; color: #111; background: #fff; border: 1px solid #111; border-radius: 2px; }
+    #controls { top: 12px; left: 12px; padding: 6px 10px; display: flex; gap: 10px; align-items: center; }
+    #controls button { font: inherit; color: inherit; background: #fff; border: 1px solid #111; border-radius: 2px; padding: 4px 8px; cursor: pointer; }
+    #controls button:hover { background: #111; color: #fff; }
+    #hubinfo { color: #333; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="controls" class="panel">
+    <button id="toggle" type="button">view: polished</button>
+    <span id="hubinfo">drag the hub circle to place it</span>
+  </div>
+  <script>
+    const BASEMAP = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const FALLBACK = { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#fafafa' } }] };
+    const GR = [-85.6681, 42.9634];
+    const CASING = ['interpolate', ['linear'], ['zoom'], 10, 3.5, 14, 6.5, 18, 13];
+    const COLOR = ['interpolate', ['linear'], ['zoom'], 10, 1.6, 14, 3.6, 18, 8.5];
+
+    let map, view = 'polished';
+    const btn = document.getElementById('toggle');
+    function setView(v) {
+      view = v; btn.textContent = 'view: ' + v;
+      if (!map.getLayer('polished-color')) return;
+      const show = (id, on) => map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+      show('input-casing', v === 'input'); show('input-color', v === 'input');
+      show('polished-casing', v === 'polished'); show('polished-color', v === 'polished');
+    }
+    btn.addEventListener('click', () => setView(view === 'polished' ? 'input' : 'polished'));
+
+    function addLayers() {
+      if (!map || (map.getLayer && map.getLayer('polished-color'))) return;
+      try {
+        map.addSource('input', { type: 'geojson', data: './data/route-overrides.geojson' });
+        map.addSource('polished', { type: 'geojson', data: './data/routes-final.geojson' });
+      } catch (e) { return; }
+      const routesOnly = ['!', ['has', 'kind']]; // skip hubzone/station features
+      const pair = (key, vis) => {
+        map.addLayer({ id: key + '-casing', type: 'line', source: key, filter: routesOnly, layout: { 'line-cap': 'round', 'line-join': 'round', visibility: vis }, paint: { 'line-color': '#fff', 'line-width': CASING } });
+        map.addLayer({ id: key + '-color', type: 'line', source: key, filter: routesOnly, layout: { 'line-cap': 'round', 'line-join': 'round', visibility: vis }, paint: { 'line-color': ['get', 'color'], 'line-width': COLOR } });
+      };
+      pair('input', view === 'input' ? 'visible' : 'none');
+      pair('polished', view === 'polished' ? 'visible' : 'none');
+      setupHub();
+    }
+
+    // Interactive hub box (vertical rounded rectangle): drag the white center dot to
+    // move it, drag the black corner dot to resize (width + height). The readout shows
+    // the center + size to bake into polish-routes.mjs.
+    const MLAT = 110540;
+    const mlon = (lat) => 111320 * Math.cos((lat * Math.PI) / 180);
+    const m2ll = (c, mx, my) => [c[0] + mx / mlon(c[1]), c[1] + my / MLAT];
+    let hubCenter = [-85.6732, 42.96004], hubW = 130, hubH = 420; // half-extents (m)
+    const hubCR = () => Math.min(hubW, hubH) * 0.5; // corner radius
+    function roundRectRing(c, w, h, cr) {
+      const pts = [];
+      const corners = [[w - cr, h - cr, 0], [-(w - cr), h - cr, Math.PI / 2], [-(w - cr), -(h - cr), Math.PI], [w - cr, -(h - cr), 3 * Math.PI / 2]];
+      for (const [ox, oy, a0] of corners) for (let i = 0; i <= 8; i++) { const a = a0 + (i / 8) * (Math.PI / 2); pts.push(m2ll(c, ox + cr * Math.cos(a), oy + cr * Math.sin(a))); }
+      pts.push(pts[0]);
+      return pts;
+    }
+    function hubFC() {
+      return { type: 'FeatureCollection', features: [
+        { type: 'Feature', properties: { kind: 'ring' }, geometry: { type: 'LineString', coordinates: roundRectRing(hubCenter, hubW, hubH, hubCR()) } },
+        { type: 'Feature', properties: { kind: 'center' }, geometry: { type: 'Point', coordinates: hubCenter } },
+        { type: 'Feature', properties: { kind: 'handle' }, geometry: { type: 'Point', coordinates: m2ll(hubCenter, hubW, hubH) } },
+      ] };
+    }
+    const hubInfo = document.getElementById('hubinfo');
+    function refreshHub() {
+      if (map.getSource('hub')) map.getSource('hub').setData(hubFC());
+      hubInfo.textContent = `hub: [${hubCenter[0].toFixed(5)}, ${hubCenter[1].toFixed(5)}]  ${Math.round(2 * hubW)}x${Math.round(2 * hubH)}m`;
+    }
+    function setupHub() {
+      if (map.getSource('hub')) return;
+      map.addSource('hub', { type: 'geojson', data: hubFC() });
+      map.addLayer({ id: 'hub-ring', type: 'line', source: 'hub', filter: ['==', ['get', 'kind'], 'ring'], paint: { 'line-color': '#111', 'line-width': 2, 'line-dasharray': [3, 2] } });
+      map.addLayer({ id: 'hub-handle', type: 'circle', source: 'hub', filter: ['==', ['get', 'kind'], 'handle'], paint: { 'circle-radius': 6, 'circle-color': '#111' } });
+      map.addLayer({ id: 'hub-center', type: 'circle', source: 'hub', filter: ['==', ['get', 'kind'], 'center'], paint: { 'circle-radius': 6, 'circle-color': '#fff', 'circle-stroke-color': '#111', 'circle-stroke-width': 2.5 } });
+      refreshHub();
+      let drag = null;
+      const at = (pt, layer) => map.queryRenderedFeatures(pt, { layers: [layer] }).length > 0;
+      map.on('mousedown', (e) => {
+        if (at(e.point, 'hub-center')) drag = 'center';
+        else if (at(e.point, 'hub-handle')) drag = 'handle';
+        if (drag) { map.dragPan.disable(); e.preventDefault(); }
+      });
+      map.on('mousemove', (e) => {
+        if (!drag) return;
+        if (drag === 'center') hubCenter = [e.lngLat.lng, e.lngLat.lat];
+        else { const k = mlon(hubCenter[1]); hubW = Math.max(40, Math.abs(e.lngLat.lng - hubCenter[0]) * k); hubH = Math.max(40, Math.abs(e.lngLat.lat - hubCenter[1]) * MLAT); }
+        refreshHub();
+      });
+      map.on('mouseup', () => { if (drag) { drag = null; map.dragPan.enable(); } });
+      for (const [l, c] of [['hub-center', 'move'], ['hub-handle', 'nesw-resize']]) {
+        map.on('mouseenter', l, () => { map.getCanvas().style.cursor = c; });
+        map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
+      }
+    }
+
+    function build(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GR, zoom: 12 });
+      map.on('styledata', addLayers);
+      map.on('load', addLayers);
+    }
+    (async () => {
+      let style = BASEMAP;
+      try { const r = await fetch(BASEMAP); if (!r.ok) throw new Error('x'); } catch { style = FALLBACK; }
+      build(style);
+      const retry = setInterval(() => { addLayers(); if (map.getLayer && map.getLayer('polished-color')) clearInterval(retry); }, 250);
+    })();
+  </script>
+</body>
+</html>

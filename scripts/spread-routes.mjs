@@ -69,7 +69,21 @@ function hubTaper(x, y) {
 }
 
 const data = JSON.parse(readFileSync(IN, 'utf8'));
-const { lines } = detectCoincidence(data.features);
+
+// Merged per-route geometry stores split sections (one-way couplet legs) as a
+// MultiLineString. Spread each section independently, so flatten to one LineString
+// pseudo-feature per part, keeping the route id and color.
+const flat = [];
+for (const f of data.features) {
+  if (f.geometry.type === 'MultiLineString') {
+    for (const part of f.geometry.coordinates) {
+      flat.push({ ...f, geometry: { type: 'LineString', coordinates: part } });
+    }
+  } else {
+    flat.push(f);
+  }
+}
+const { lines } = detectCoincidence(flat);
 
 let maxSpread = 0; // widest bundle seen, meters (knot diagnostic)
 

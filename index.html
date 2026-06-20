@@ -97,11 +97,13 @@
     // routes invisible even though our own GeoJSON loaded fine. Guarded on the
     // source, so it is idempotent across the repeated triggers and a rebuild.
     function addRoutes() {
-      if (!map.isStyleLoaded() || map.getSource('routes')) return;
+      // Idempotent. Don't gate on isStyleLoaded(): a heavy basemap (or one glyph
+      // range that never resolves) can keep it false while the style is perfectly
+      // usable, leaving the routes invisible. Instead just try to add; if the style
+      // isn't ready the getStyle()/addSource calls throw and the poll retries.
+      if (!map || (map.getLayer && map.getLayer('routes-color'))) return;
 
-      // Route lines, parsed offline from GTFS into static GeoJSON. Each feature
-      // carries its real wayfinding `color`. See scripts/build-routes.mjs.
-      map.addSource('routes', { type: 'geojson', data: './data/routes.geojson' });
+      const routesOnly = ['!', ['has', 'kind']]; // draw only route lines as lines
 
       // Insert lines above roads and buildings but beneath the place/road-name
       // labels, so text stays legible on top of the routes. In Positron the
@@ -109,9 +111,31 @@
       // before that (including the lone waterway_label) is geography we want
       // the routes to sit above. In the bare fallback there are no labels, so
       // firstLabel is undefined and the routes simply sit on top of the ground.
-      const firstLabel = map.getStyle().layers
-        .find((l) => l.type === 'symbol' && /^(watername|place|roadname|poi|housenumber)/.test(l.id))
-        ?.id;
+      let firstLabel;
+      try {
+        firstLabel = map.getStyle().layers
+          .find((l) => l.type === 'symbol' && /^(watername|place|roadname|poi|housenumber)/.test(l.id))
+          ?.id;
+        // The finished route geometry: GTFS parsed and road-matched, then merged,
+        // hand-finished, and run through the polish pass (smooth + even-spacing + the
+        // downtown hub black box). Built by scripts/polish-routes.mjs from
+        // data/route-overrides.geojson. Carries route LineStrings (with real wayfinding
+        // `color`) plus a `kind:'hubzone'` polygon and a `kind:'station'` marker.
+        map.addSource('routes', { type: 'geojson', data: './data/routes-final.geojson' });
+      } catch (e) { return; } // basemap style not ready yet; the poll retries
+
+      // Downtown hub "black box": ~19 routes converge here too densely to show
+      // truthfully, so the routes are clipped at this zone and a bus inside it reads
+      // as "at the hub" rather than a fake exact position. Drawn as a quiet washed
+      // area + hairline so the clipped route ends read as a station, not a glitch.
+      map.addLayer({
+        id: 'hub-fill', type: 'fill', source: 'routes', filter: ['==', ['get', 'kind'], 'hubzone'],
+        paint: { 'fill-color': '#111', 'fill-opacity': 0.05 },
+      }, firstLabel);
+      map.addLayer({
+        id: 'hub-outline', type: 'line', source: 'routes', filter: ['==', ['get', 'kind'], 'hubzone'],
+        paint: { 'line-color': '#111', 'line-width': 1, 'line-opacity': 0.25 },
+      }, firstLabel);
 
       // White casing underneath: a hairline border that keeps bundled routes
       // legible where many share a corridor (Division Ave, the downtown knot).
@@ -119,6 +143,7 @@
         id: 'routes-casing',
         type: 'line',
         source: 'routes',
+        filter: routesOnly,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
           'line-color': '#ffffff',
@@ -134,6 +159,7 @@
         id: 'routes-color',
         type: 'line',
         source: 'routes',
+        filter: routesOnly,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
           'line-color': ['get', 'color'],
@@ -142,6 +168,12 @@
             10, 1.6,  14, 3.6,  18, 8.5,
           ],
         },
+      }, firstLabel);
+
+      // Station marker at the hub, on top of the clipped route ends.
+      map.addLayer({
+        id: 'station', type: 'circle', source: 'routes', filter: ['==', ['get', 'kind'], 'station'],
+        paint: { 'circle-radius': 5, 'circle-color': '#fff', 'circle-stroke-color': '#111', 'circle-stroke-width': 2 },
       }, firstLabel);
 
       // Restore the current label choice (matters after a rebuild onto bare ground).
