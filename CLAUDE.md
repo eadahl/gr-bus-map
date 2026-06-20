@@ -288,8 +288,13 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     (c) RELIABILITY DATA EXISTS: StopDepartures gives scheduled-vs-ACTUAL (`ADT`/`Dev`) per stop per
         trip. Enables an on-time/confidence layer, ghost-bus (missed-trip) detection, bunching. This
         is the big post-base-map feature direction Erik is excited about.
-  - NEXT STEPS (not built yet): (2a) DETOUR LOGGER now (snapshot trace filenames + PublicMessages
-    every ~15-30 min alongside the GPS collector). (2b) map-match the reconstructed patterns onto OSM
+  - [DONE] STEP 2a: detour logger. `scripts/collect-detours.mjs` polls GetAllRoutes + PublicMessages
+    every ~15 min, logs a snapshot (deduped on change) of detoured routes (by `_DET_` trace marker)
+    and active messages (routes, window, reason) to data/detour-log.ndjson, and ARCHIVES every route's
+    KML to data/detour-traces/ (both gitignored). The archive doubles as the official-geometry set for
+    the three-way base compare. Verified: 15 routes detoured, 55 messages, 34 traces archived. Run it
+    alongside the GPS collector: `node scripts/collect-detours.mjs`.
+  - NEXT STEPS (not built yet): (2b) map-match the reconstructed patterns onto OSM
     roads with the existing match-routes machinery (also removes the raw-GPS wobble). (3) THREE-WAY
     base head-to-head (GTFS vs KML vs reconstructed GPS), then decide how the winning base reaches the
     screen: enrich the editor's starting geometry for hand-finish, vs a fuller algorithmic finish.

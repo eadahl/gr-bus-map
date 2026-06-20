@@ -43,3 +43,7 @@ data/vehicle-log.ndjson
 # Derived coverage-gap report from scripts/find-coverage-gaps.mjs (regenerable).
 data/coverage-gaps.geojson
 data/routes-reconstructed-debug.geojson
+
+# Detour timeline log + archived route trace KMLs from collect-detours.mjs.
+data/detour-log.ndjson
+data/detour-traces/
