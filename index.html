@@ -312,35 +312,65 @@
       return inside;
     }
 
-    // Turn a poll's worth of vehicles into dot features.
+    // ── Smooth motion (rung 3) ───────────────────────────────────────────────
+    // Without this, buses teleport at each poll. Instead we GLIDE: remember each
+    // bus's last drawn position and ease it to its new target over the poll
+    // interval in a requestAnimationFrame loop, so the fleet is always moving
+    // calmly rather than jumping every 10s. (Straight line between snapped points;
+    // following the road curve is a later refinement.)
+    const GLIDE_MS = 10000;       // match the poll interval below
+    const anim = new Map();       // vehicleId -> { from, to, start, color, anomaly, bearing, route }
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const curPos = (a, now) => lerp(a.from, a.to, Math.min(1, (now - a.start) / GLIDE_MS));
+
+    // Each poll updates animation TARGETS (snapped/pinned exactly as before); the
+    // frame loop draws every in-between position.
     //  - At the hub (raw GPS inside the black box): dropped, reads as "at the hub".
-    //  - On its route (within SNAP_MAX_M of the drawn line): PINNED to the line
-    //    (snapped) and drawn as a solid colored dot. The trusted, normal case.
-    //  - Off its route (farther than SNAP_MAX_M, or no line at all): plotted at its
-    //    TRUE GPS and flagged anomaly:true, drawn as a hollow ring. We show it but
-    //    visibly mark it as off the standard route rather than faking a pin.
+    //  - On its route (within SNAP_MAX_M): pinned to the line, solid colored dot.
+    //  - Off its route: plotted at true GPS, flagged anomaly (hollow ring).
     function renderVehicles(vehicles) {
-      const src = map && map.getSource && map.getSource('vehicles');
-      if (!src) return; // layer not built yet; the next poll (10s) will land
-      const features = [];
+      const now = performance.now();
+      const live = new Set();
       for (const v of vehicles) {
         if (v.lat == null || v.lon == null) continue;
         const raw = [v.lon, v.lat];
         if (pointInRing(raw, hubRing)) continue; // physically at the hub
-        const id = String(v.routeId);
-        const color = colorById[id] || '#555';
-        const paths = geomById[id];
+        const id = String(v.id);                 // one bus
+        const route = String(v.routeId);
+        const color = colorById[route] || '#555';
+        const paths = geomById[route];
         const best = paths && paths.length ? snapToPaths(raw, paths) : null;
         const distM = best ? Math.sqrt(best.dist2) * M_PER_DEG : Infinity;
         const onRoute = best && distM <= SNAP_MAX_M;
+        const to = onRoute ? best.point : raw;
+        const prev = anim.get(id);
+        anim.set(id, {
+          from: prev ? curPos(prev, now) : to,   // ease out from where it is right now
+          to, start: now, color, anomaly: !onRoute, bearing: v.heading ?? 0, route,
+        });
+        live.add(id);
+      }
+      for (const id of anim.keys()) if (!live.has(id)) anim.delete(id); // buses that left
+      draw(now); // immediate draw so buses update even if rAF is throttled (background tab)
+    }
+
+    // Build the eased positions into the vehicles source. Called every animation
+    // frame (smooth glide) and once per poll (the fallback above).
+    function draw(now) {
+      const src = map && map.getSource && map.getSource('vehicles');
+      if (!src) return;
+      const features = [];
+      for (const [, a] of anim) {
         features.push({
           type: 'Feature',
-          geometry: { type: 'Point', coordinates: onRoute ? best.point : raw },
-          properties: { color, route: id, anomaly: !onRoute },
+          geometry: { type: 'Point', coordinates: curPos(a, now) },
+          properties: { color: a.color, route: a.route, anomaly: a.anomaly, bearing: a.bearing },
         });
       }
       src.setData({ type: 'FeatureCollection', features });
     }
+    function frame() { draw(performance.now()); requestAnimationFrame(frame); }
+    requestAnimationFrame(frame);
 
     // Build the color/hub lookups from the drawn geometry, then poll those exact
     // route IDs. One GetAllVehiclesForRoutes call per sweep, every 10s.
