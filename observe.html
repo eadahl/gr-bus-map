@@ -34,6 +34,20 @@
     select { font:inherit; font-size:12px; padding:4px 6px; border:0.5px solid var(--line); border-radius:4px; background:#fff; }
     .leg { display:flex; gap:16px; margin:10px 2px 0; font-size:12px; color:#555; align-items:center; flex-wrap:wrap; }
     .leg b { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:6px; vertical-align:3px; }
+    #bee-tip { position:fixed; display:none; pointer-events:none; z-index:20; background:#fff; border:0.5px solid rgba(0,0,0,0.3);
+      border-radius:6px; padding:8px 10px; font-size:11px; line-height:1.6; max-width:280px; box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+    #bee-tip .rt { font-weight:600; }
+    .bd { cursor:pointer; transition:opacity .08s; }
+    #fleet tbody tr { cursor:pointer; transition:opacity .1s; }
+    #busdots circle, #tr-svg path { transition:opacity .1s; }
+    .rrow { display:flex; align-items:center; gap:8px; padding:3px 4px; border-radius:4px; cursor:pointer; }
+    .rrow:hover { background:var(--bg); }
+    .rrow.sel { background:#eef0ee; }
+    .rsw { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+    .rnm { width:200px; flex:0 0 auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .rbarwrap { flex:1; height:8px; background:var(--bg); border-radius:4px; overflow:hidden; }
+    .rbar { display:block; height:100%; }
+    .rpct { width:40px; text-align:right; flex:0 0 auto; color:var(--mut); }
   </style>
 </head>
 <body>
@@ -67,6 +81,9 @@
         </div>
       </div>
 
+      <div class="sec">route reliability <span class="muted">(late share, accumulated this session · click to pin a route everywhere)</span></div>
+      <div class="card"><div id="rank-rows" class="muted">accumulating...</div></div>
+
       <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
       <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
     </section>
@@ -82,7 +99,9 @@
         at on-time but measured pushes right, the schedule is optimistic, buses run later than predicted.
         caveat: measured skews late + sparse (on-time buses vanish before we can catch them, late ones linger),
         so trust the shape, not the exact %.
+        <span style="color:var(--ink)">Hover a dot to light up its whole route.</span>
       </div>
+      <div id="bee-tip"></div>
     </section>
 
     <section id="tab-string" class="tab" hidden>
@@ -119,7 +138,23 @@
     const ago = (ms) => ms == null ? '-' : (ms<60000? Math.round(ms/1000)+'s' : Math.round(ms/60000)+'m') + ' ago';
 
     let stops = [], routes = {}, routesFinal = null, sortKey = 'route', sortDir = 1;
-    const logState = {};
+    const logState = {}, stopName = {};
+    let lastBee = { predicted: [], realized: [] };
+    // shared route selection: hover is transient, pin is sticky; activeRoute drives
+    // a single highlight applied across every panel (beeswarm, fleet map, table, tracks, ranking).
+    let pinnedRoute = null, hoverRoute = null;
+    const activeRoute = () => hoverRoute || pinnedRoute;
+    const routeStatus = {}; // routeId -> {ontime, late} accumulated this session (for the ranking)
+    function setHover(r) { if (hoverRoute === r) return; hoverRoute = r; applyHighlight(); }
+    function setPin(r) { pinnedRoute = (pinnedRoute === r) ? null : r; applyHighlight(); }
+    function applyHighlight() {
+      const r = activeRoute();
+      document.querySelectorAll('#beeswarm circle').forEach(c => c.style.opacity = r==null?0.9:(c.dataset.route===r?0.95:0.07));
+      document.querySelectorAll('#busdots circle').forEach(c => c.style.opacity = r==null?1:(c.dataset.route===r?1:0.12));
+      document.querySelectorAll('#tr-svg path[data-route]').forEach(p => p.style.opacity = r==null?0.16:(p.dataset.route===r?0.55:0.04));
+      document.querySelectorAll('#fleet tbody tr').forEach(tr => tr.style.opacity = r==null?1:(tr.dataset.route===r?1:0.32));
+      document.querySelectorAll('#rank-rows .rrow').forEach(el => el.classList.toggle('sel', r!=null && el.dataset.route===r));
+    }
     let proj = null, MM_W = 560, MM_H = 420;
     const hist = [];
     let logCache = null, logAt = 0;
@@ -138,10 +173,11 @@
       try {
         const s = await (await fetch(`${REST}/Stops/GetAllStops?_=${Date.now()}`)).json();
         stops = s.map(x => ({ id: x.StopId, name: x.Name, c: [x.Longitude, x.Latitude] }));
+        for (const x of s) stopName[x.StopId] = x.Name;
       } catch {}
       try {
         const r = await (await fetch(`${REST}/Routes/GetAllRoutes?_=${Date.now()}`)).json();
-        for (const x of r) routes[String(x.RouteId)] = { color: '#'+(x.Color||'888888').replace('#',''), name: x.ShortName, det: /_DET_/.test(x.RouteTraceFilename||'') };
+        for (const x of r) routes[String(x.RouteId)] = { color: '#'+(x.Color||'888888').replace('#',''), name: x.ShortName, long: x.LongName, det: /_DET_/.test(x.RouteTraceFilename||'') };
       } catch {}
       try {
         routesFinal = await (await fetch(`./data/routes-final.geojson?_=${Date.now()}`)).json();
@@ -273,9 +309,10 @@
         for (const p of tr.pts) { const [x,y]=proj(p[0],p[1]);
           const cmd = (!prev || distM(prev, p) > 600) ? 'M' : 'L';
           d += cmd + x.toFixed(1) + ',' + y.toFixed(1); prev = p; }
-        s += `<path d="${d}" fill="none" stroke="${col}" stroke-width="1" opacity="0.16"/>`; }
+        s += `<path d="${d}" fill="none" stroke="${col}" stroke-width="1" opacity="0.16" data-route="${tr.route}"/>`; }
       document.getElementById('tr-svg').innerHTML = s;
       note.textContent = `${byTrip.size} trip tracks · ${log.length} points · ${hours>=99?'all':'last '+hours+'h'}`;
+      applyHighlight();
     }
 
     // ── collectors ───────────────────────────────────────────────────────────
@@ -319,7 +356,8 @@
           occ: b.OccupancyStatusReportLabel, status: b.OpStatus, stopId: b.StopId, lastStop: b.LastStop, comm: b.CommStatus, gps: b.GPSStatus,
           stopped, atStop: !!(near && near.d <= AT_STOP_M), near, lat: b.Latitude, lon: b.Longitude };
       });
-      renderStats(); renderFleet(); renderVisuals();
+      for (const b of fleet) { if (b.status==='ONTIME'||b.status==='LATE') { const s=routeStatus[b.route]=routeStatus[b.route]||{ontime:0,late:0}; s[b.status==='LATE'?'late':'ontime']++; } }
+      renderStats(); renderFleet(); renderVisuals(); renderRanking();
       document.getElementById('fleetnote').textContent = '· ' + fleet.length + ' buses · updated ' + new Date().toLocaleTimeString();
     }
     function renderStats() {
@@ -334,14 +372,15 @@
     function renderVisuals() {
       if (proj) { const g=document.getElementById('busdots');
         if (g) g.innerHTML = fleet.map(b=>{ const [x,y]=proj(b.lon,b.lat), col=(routes[b.route]||{}).color||'#888', late=b.status==='LATE';
-          const halo=b.atStop?`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="none" stroke="${col}" opacity="0.5"/>`:'';
-          return halo+`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="${late?'#c23b34':'#fff'}" stroke-width="${late?1.5:0.6}"/>`; }).join('');
+          const halo=b.atStop?`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="none" stroke="${col}" opacity="0.5" data-route="${b.route}"/>`:'';
+          return halo+`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="${late?'#c23b34':'#fff'}" stroke-width="${late?1.5:0.6}" data-route="${b.route}"/>`; }).join('');
         document.getElementById('mapnote').textContent='· '+fleet.length+' buses'; }
       const ot=fleet.filter(b=>b.status==='ONTIME').length, la=fleet.filter(b=>b.status==='LATE').length, ts=fleet.filter(b=>b.status==='TRIP START').length;
       const other=fleet.length-ot-la-ts, tot=fleet.length||1, seg=(n,c)=>n?`<div style="width:${(n/tot*100).toFixed(1)}%;background:${c};height:18px"></div>`:'';
       document.getElementById('otbar').innerHTML=`<div style="display:flex;border-radius:4px;overflow:hidden;border:0.5px solid var(--line)">`+seg(ot,'#1d8f5e')+seg(la,'#c23b34')+seg(ts,'#9a9a85')+seg(other,'#d3d1c7')+`</div><div class="d" style="margin-top:4px">on time ${ot} · late ${la} · starting ${ts}${other?' · other '+other:''}</div>`;
       hist.push({fleet:fleet.length,late:la,atStop:fleet.filter(b=>b.atStop).length}); if(hist.length>80)hist.shift();
       document.getElementById('sparks').innerHTML=[['fleet','#111',h=>h.fleet],['late','#c23b34',h=>h.late],['at stop','#1d8f5e',h=>h.atStop]].map(([lab,c,f])=>spark(lab,c,hist.map(f))).join('');
+      applyHighlight();
     }
     function spark(label,color,vals){ const W=130,H=34,n=vals.length,max=Math.max(1,...vals),min=Math.min(0,...vals),rng=(max-min)||1;
       const pts=vals.map((v,i)=>`${(i/Math.max(1,n-1)*W).toFixed(1)},${(H-((v-min)/rng)*(H-6)-3).toFixed(1)}`).join(' ');
@@ -357,7 +396,8 @@
         const na=num(ka),nb=num(kb); if(na!=null&&nb!=null)return (na-nb)*sortDir; return String(ka??'').localeCompare(String(kb??''))*sortDir; });
       document.querySelector('#fleet tbody').innerHTML=rows.map(b=>{ const col=(routes[b.route]||{}).color||'#888';
         const state=b.atStop?`<span class="atstop">at stop</span>`:b.stopped?`stopped${b.near?' ('+Math.round(b.near.d)+'m)':''}`:'moving';
-        return `<tr><td>${b.veh||''}</td><td class="swatch"><span style="background:${col}"></span>${b.route}</td><td>${b.dir||''}</td><td class="${b.status==='LATE'?'late':''}">${b.status||''}</td><td>${b.speed??''}</td><td>${b.heading??''}</td><td>${b.occ||''}</td><td>${b.stopId||''}</td><td>${state}</td><td class="muted">${b.lastStop||''}</td><td>${b.comm||''}</td></tr>`; }).join('');
+        return `<tr data-route="${b.route}"><td>${b.veh||''}</td><td class="swatch"><span style="background:${col}"></span>${b.route}</td><td>${b.dir||''}</td><td class="${b.status==='LATE'?'late':''}">${b.status||''}</td><td>${b.speed??''}</td><td>${b.heading??''}</td><td>${b.occ||''}</td><td>${b.stopId||''}</td><td>${state}</td><td class="muted">${b.lastStop||''}</td><td>${b.comm||''}</td></tr>`; }).join('');
+      applyHighlight();
     }
 
     // ── deviation beeswarm ───────────────────────────────────────────────────────
@@ -368,10 +408,12 @@
       const now=Date.now(), byDep=new Map();
       for (const ln of txt.trim().split('\n')) { if(!ln)continue; let r; try{r=JSON.parse(ln)}catch{continue}
         if(!r.sched||r.sched<now-45*60000||r.sched>now+30*60000)continue;
-        const k=r.stop+'|'+tripIdOf(r.trip)+'|'+r.sched; if(!byDep.has(k))byDep.set(k,{sched:r.sched,route:String(r.route),rows:[]}); byDep.get(k).rows.push({t:r.t,dev:devMin(r.dev)}); }
+        const k=r.stop+'|'+tripIdOf(r.trip)+'|'+r.sched; if(!byDep.has(k))byDep.set(k,{sched:r.sched,route:String(r.route),stop:r.stop,trip:tripIdOf(r.trip),rows:[]}); byDep.get(k).rows.push({t:r.t,dev:devMin(r.dev)}); }
       const predicted=[], realized=[];
-      for (const dep of byDep.values()) { if (dep.sched>now){ const l=dep.rows.filter(x=>x.dev!=null).sort((a,b)=>b.t-a.t)[0]; if(l)predicted.push({dev:l.dev,route:dep.route}); }
-        else { const c=dep.rows.filter(x=>x.t>=dep.sched-30000&&x.dev!=null).sort((a,b)=>b.t-a.t)[0]; if(c)realized.push({dev:c.dev,route:dep.route}); } }
+      for (const dep of byDep.values()) { const meta={route:dep.route,stop:dep.stop,sched:dep.sched,trip:dep.trip};
+        if (dep.sched>now){ const l=dep.rows.filter(x=>x.dev!=null).sort((a,b)=>b.t-a.t)[0]; if(l)predicted.push({...meta,dev:l.dev,kind:'predicted'}); }
+        else { const c=dep.rows.filter(x=>x.t>=dep.sched-30000&&x.dev!=null).sort((a,b)=>b.t-a.t)[0]; if(c)realized.push({...meta,dev:c.dev,kind:'measured'}); } }
+      lastBee = { predicted, realized };
       const stat=(arr)=>{ if(!arr.length)return{med:0,late:0}; const d=arr.map(o=>o.dev).sort((a,b)=>a-b); return {med:d[Math.floor(d.length/2)], late:Math.round(arr.filter(o=>o.dev>=1).length/arr.length*100)}; };
       const sp=stat(predicted), sr=stat(realized);
       document.getElementById('beenote').textContent=`· predicted ${predicted.length} (median ${sp.med.toFixed(1)} min, ${sp.late}% late) vs measured ${realized.length} (median ${sr.med.toFixed(1)} min, ${sr.late}% late)`;
@@ -380,16 +422,58 @@
     function renderBeeswarm(d) {
       const W=1000,H=280,padL=16,padR=16,MAXD=15,cy=Math.round(H/2);
       const x=v=>padL+(Math.min(MAXD,Math.max(0,v))/MAXD)*(W-padL-padR);
-      const swarm=(arr,dir)=>{ const bins={}; for(const o of arr){const b=Math.round(o.dev/0.5);(bins[b]=bins[b]||[]).push(o);} let s='';
-        for(const b in bins){ const cx=x(b*0.5); bins[b].forEach((o,i)=>{ const yy=cy+dir*(9+i*5.2); if(yy<16||yy>H-16)return; s+=`<circle cx="${cx.toFixed(1)}" cy="${yy.toFixed(1)}" r="2.6" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9"/>`; }); } return s; };
+      const swarm=(arr,dir,kind)=>{ const bins={}; for(const o of arr){const b=Math.round(o.dev/0.5);(bins[b]=bins[b]||[]).push(o);} let s='';
+        for(const b in bins){ const cx=x(b*0.5); bins[b].forEach((o,i)=>{ const yy=cy+dir*(9+i*5.2); if(yy<16||yy>H-16)return; s+=`<circle class="bd" cx="${cx.toFixed(1)}" cy="${yy.toFixed(1)}" r="2.8" fill="${(routes[o.route]||{}).color||'#888'}" opacity="0.9" data-route="${o.route}" data-dev="${o.dev.toFixed(1)}" data-kind="${kind}" data-stop="${o.stop||''}" data-sched="${o.sched||''}"/>`; }); } return s; };
       let ax=''; [0,5,10,15].forEach(t=>{ const xx=x(t); ax+=`<line x1="${xx}" y1="16" x2="${xx}" y2="${H-16}" stroke="${t===0?'#bbb':'#eee'}" stroke-width="${t===0?1:0.5}"/><text x="${xx}" y="${cy+4}" text-anchor="middle" font-size="11" fill="#8a8a85" style="paint-order:stroke;stroke:#fafafa;stroke-width:3px">${t===0?'on time':t+' min'}</text>`; });
       const labs=`<text x="${padL}" y="16" font-size="11" fill="#8a8a85">↑ predicted (upcoming)</text><text x="${padL}" y="${H-6}" font-size="11" fill="#8a8a85">↓ measured (departed)</text>`;
-      const svg=document.getElementById('beeswarm'); svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.innerHTML=ax+labs+swarm(d.predicted,-1)+swarm(d.realized,1);
+      const svg=document.getElementById('beeswarm'); svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.innerHTML=ax+labs+swarm(d.predicted,-1,'predicted')+swarm(d.realized,1,'measured');
+      applyHighlight();
+    }
+
+    // beeswarm interrogation: hover a dot -> light up that whole route (everywhere) + tooltip
+    function beeTip(c) {
+      const r=c.dataset.route, dev=+c.dataset.dev, kind=c.dataset.kind, stop=c.dataset.stop, sched=+c.dataset.sched, ri=routes[r]||{};
+      const med=a=>{ if(!a.length)return '-'; const d=a.map(o=>o.dev).sort((x,y)=>x-y); return d[Math.floor(d.length/2)].toFixed(1); };
+      const lateP=a=>a.length?Math.round(a.filter(o=>o.dev>=1).length/a.length*100):0;
+      const M=lastBee.realized.filter(o=>o.route===r), P=lastBee.predicted.filter(o=>o.route===r);
+      return `<div class="rt"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${ri.color||'#888'};margin-right:6px"></span>route ${r}${ri.long?' · '+ri.long:''}</div>`+
+        `<div style="color:var(--mut);margin-top:3px">this dot: <b style="color:var(--ink)">${dev.toFixed(1)} min late</b> · ${kind}${sched?' · sched '+hhmm(sched):''}${stop&&stopName[stop]?' · '+stopName[stop]:''}</div>`+
+        `<div style="margin-top:5px;border-top:0.5px solid var(--line);padding-top:5px;color:var(--mut)">this route right now:</div>`+
+        `<div style="color:var(--mut)">measured ${M.length} (${lateP(M)}% late, median ${med(M)} min)</div>`+
+        `<div style="color:var(--mut)">predicted ${P.length} (${lateP(P)}% late, median ${med(P)} min)</div>`;
+    }
+    function wireBeeswarm() {
+      const svg=document.getElementById('beeswarm'), tip=document.getElementById('bee-tip');
+      svg.addEventListener('mouseover', e=>{ const c=e.target.closest('circle'); if(c){ setHover(c.dataset.route); tip.innerHTML=beeTip(c); tip.style.display='block'; } else { setHover(null); tip.style.display='none'; } });
+      svg.addEventListener('mousemove', e=>{ tip.style.left=Math.min(e.clientX+14, innerWidth-290)+'px'; tip.style.top=(e.clientY+14)+'px'; });
+      svg.addEventListener('mouseleave', ()=>{ setHover(null); tip.style.display='none'; });
+      svg.addEventListener('click', e=>{ const c=e.target.closest('circle'); setPin(c?c.dataset.route:null); });
+    }
+    // hover/click on the other panels drives the same shared selection
+    function wirePanels() {
+      const onHover = (sel, getRoute) => { const el=document.querySelector(sel); if(!el)return;
+        el.addEventListener('mouseover', e=>{ const t=getRoute(e); if(t!=null) setHover(t); });
+        el.addEventListener('mouseleave', ()=> setHover(null));
+        el.addEventListener('click', e=>{ const t=getRoute(e); setPin(t==null?null:t); }); };
+      onHover('#minimap', e=>{ const c=e.target.closest('circle'); return c?c.dataset.route:undefined; });
+      onHover('#tr-svg', e=>{ const p=e.target.closest('path'); return (p&&p.dataset.route!=null)?p.dataset.route:undefined; });
+      onHover('#fleet tbody', e=>{ const tr=e.target.closest('tr'); return tr?tr.dataset.route:undefined; });
+      onHover('#rank-rows', e=>{ const row=e.target.closest('.rrow'); return row?row.dataset.route:undefined; });
+    }
+    function renderRanking() {
+      const el=document.getElementById('rank-rows'); if(!el)return;
+      const rows=Object.entries(routeStatus).map(([r,v])=>({r,n:v.ontime+v.late,late:(v.ontime+v.late)?v.late/(v.ontime+v.late):0}))
+        .filter(x=>x.n>=5).sort((a,b)=>b.late-a.late);
+      if(!rows.length){ el.textContent='accumulating...'; return; }
+      el.innerHTML = rows.map(x=>{ const col=(routes[x.r]||{}).color||'#888', nm=(routes[x.r]||{}).long||'', pct=Math.round(x.late*100);
+        return `<div class="rrow" data-route="${x.r}"><span class="rsw" style="background:${col}"></span><span class="rnm">${x.r}${nm?' · '+nm:''}</span><span class="rbarwrap"><span class="rbar" style="width:${pct}%;background:${col}"></span></span><span class="rpct">${pct}%</span></div>`; }).join('');
+      applyHighlight();
     }
 
     function tickClock() { document.getElementById('clock').textContent = new Date().toLocaleString() + ' · fleet 8s · logs 5s · beeswarm 15s'; }
     (async () => {
       tickClock(); setInterval(tickClock, 1000);
+      wireBeeswarm(); wirePanels();
       await loadStatic();
       await pollLogs(); await pollFleet(); await pollReliability();
       setInterval(pollLogs, 5000);
