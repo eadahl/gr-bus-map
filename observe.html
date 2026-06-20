@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GR bus map - collection observability</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --ink:#111; --mut:#8a8a85; --line:rgba(0,0,0,0.12); --bg:#fafafa; --good:#1d8f5e; --warn:#b9851a; --bad:#c23b34; }
+    html,body { margin:0; background:var(--bg); color:var(--ink);
+      font:13px/1.5 ui-monospace,'IBM Plex Mono',SFMono-Regular,Menlo,monospace; }
+    .wrap { max-width:1200px; margin:0 auto; padding:18px 20px 60px; }
+    h1 { font-size:15px; font-weight:600; margin:0; letter-spacing:.02em; }
+    .sub { color:var(--mut); font-size:12px; margin:2px 0 18px; }
+    .sec { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--mut); margin:22px 0 8px; }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+    .card { background:#fff; border:0.5px solid var(--line); border-radius:8px; padding:10px 12px; }
+    .card .k { color:var(--mut); font-size:11px; }
+    .card .v { font-size:20px; font-weight:600; margin-top:2px; }
+    .card .d { color:var(--mut); font-size:11px; margin-top:3px; }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:1px; }
+    .g{background:var(--good)} .w{background:var(--warn)} .b{background:var(--bad)}
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th,td { text-align:left; padding:4px 8px; border-bottom:0.5px solid var(--line); white-space:nowrap; }
+    th { color:var(--mut); font-weight:500; position:sticky; top:0; background:var(--bg); cursor:pointer; }
+    td.swatch span { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; vertical-align:0; }
+    .late { color:var(--bad); } .atstop { color:var(--good); }
+    .tbl-wrap { max-height:560px; overflow:auto; border:0.5px solid var(--line); border-radius:8px; background:#fff; }
+    .muted { color:var(--mut); }
+    .pill { font-size:11px; padding:1px 6px; border-radius:10px; border:0.5px solid var(--line); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>collection observability</h1>
+    <div class="sub" id="clock">starting...</div>
+
+    <div class="sec">collectors (local log files)</div>
+    <div class="cards" id="collectors"></div>
+
+    <div class="sec">live fleet snapshot (direct from the API)</div>
+    <div class="cards" id="stats"></div>
+
+    <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
+    <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <script>
+    const REST = 'https://connect.ridetherapid.org/InfoPoint/rest';
+    const LOGS = [
+      { name: 'vehicle-log', path: './data/vehicle-log.ndjson', fresh: 30 },
+      { name: 'detour-log', path: './data/detour-log.ndjson', fresh: 1800 },
+      { name: 'reliability-log', path: './data/reliability-log.ndjson', fresh: 30 },
+    ];
+    const COS = Math.cos(42.96 * Math.PI / 180), MPD = 111320;
+    const AT_STOP_M = 40;             // speed~0 within this of a stop = dwelling
+    const distM = (a, b) => Math.hypot((a[0]-b[0])*COS*MPD, (a[1]-b[1])*MPD);
+    const ago = (ms) => ms == null ? '-' : (ms<60000? Math.round(ms/1000)+'s' : Math.round(ms/60000)+'m') + ' ago';
+
+    let stops = [], routes = {}, sortKey = 'route', sortDir = 1;
+    const logState = {}; // name -> {size, prevSize, lastGrow}
+
+    async function loadStatic() {
+      try {
+        const s = await (await fetch(`${REST}/Stops/GetAllStops?_=${Date.now()}`)).json();
+        stops = s.map(x => ({ id: x.StopId, name: x.Name, c: [x.Longitude, x.Latitude] }));
+      } catch {}
+      try {
+        const r = await (await fetch(`${REST}/Routes/GetAllRoutes?_=${Date.now()}`)).json();
+        for (const x of r) routes[String(x.RouteId)] = { color: '#'+(x.Color||'888888').replace('#',''), name: x.ShortName, det: /_DET_/.test(x.RouteTraceFilename||'') };
+      } catch {}
+    }
+
+    function nearestStop(c) {
+      let best = null;
+      for (const s of stops) { const d = distM(c, s.c); if (!best || d < best.d) best = { d, name: s.name }; }
+      return best;
+    }
+
+    async function pollLogs() {
+      for (const L of LOGS) {
+        try {
+          const res = await fetch(L.path + '?_=' + Date.now(), { method: 'HEAD' });
+          const size = res.ok ? Number(res.headers.get('content-length') || 0) : null;
+          const st = logState[L.name] || { size: null, lastGrow: null, base: size };
+          if (size != null && st.size != null && size > st.size) st.lastGrow = Date.now();
+          if (st.base == null) st.base = size;
+          st.prevSize = st.size; st.size = size;
+          logState[L.name] = st;
+        } catch { logState[L.name] = { size: null }; }
+      }
+      renderCollectors();
+    }
+
+    function fmtBytes(n) { if (n==null) return 'missing'; if (n<1024) return n+' B'; if (n<1e6) return (n/1024).toFixed(0)+' KB'; return (n/1e6).toFixed(2)+' MB'; }
+
+    function renderCollectors() {
+      const now = Date.now();
+      document.getElementById('collectors').innerHTML = LOGS.map(L => {
+        const st = logState[L.name] || {};
+        const sinceGrow = st.lastGrow ? now - st.lastGrow : null;
+        let cls = 'b', txt = 'no file';
+        if (st.size != null) {
+          if (sinceGrow == null) { cls='w'; txt='waiting'; }
+          else if (sinceGrow < L.fresh*1000) { cls='g'; txt='live'; }
+          else { cls='w'; txt='stale'; }
+        }
+        const grown = (st.base!=null && st.size!=null) ? '+'+fmtBytes(st.size-st.base)+' this session' : '';
+        return `<div class="card"><div class="k"><span class="dot ${cls}"></span>${L.name}</div>
+          <div class="v">${fmtBytes(st.size)}</div>
+          <div class="d">${txt}${sinceGrow!=null?' · grew '+ago(sinceGrow):''}<br>${grown}</div></div>`;
+      }).join('');
+    }
+
+    const DROP = new Set(['DriverName','DriverFirstName','DriverLastName','DriverFareboxId','VehicleFareboxId','BlockFareboxId']);
+    let fleet = [];
+
+    async function pollFleet() {
+      const ids = Object.keys(routes).length ? Object.keys(routes).join(',') : '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,24,27,28,33,34,44,45,51,90,1000';
+      let v;
+      try { v = await (await fetch(`${REST}/Vehicles/GetAllVehiclesForRoutes?routeIDs=${ids}&_=${Date.now()}`)).json(); }
+      catch { return; }
+      const now = Date.now();
+      fleet = v.filter(b => b.Latitude != null).map(b => {
+        const stopped = (b.Speed || 0) === 0;
+        let near = null;
+        if (stopped && stops.length) near = nearestStop([b.Longitude, b.Latitude]);
+        const atStop = !!(near && near.d <= AT_STOP_M);
+        return {
+          veh: b.Name, route: String(b.RouteId), dir: b.Direction, dest: b.Destination,
+          speed: b.Speed, heading: b.Heading, occ: b.OccupancyStatusReportLabel, status: b.OpStatus,
+          stopId: b.StopId, lastStop: b.LastStop, comm: b.CommStatus, gps: b.GPSStatus,
+          stopped, atStop, near, lat: b.Latitude, lon: b.Longitude,
+        };
+      });
+      renderStats(); renderFleet();
+      document.getElementById('fleetnote').textContent = '· ' + fleet.length + ' buses · updated ' + new Date().toLocaleTimeString();
+    }
+
+    function renderStats() {
+      const n = fleet.length;
+      const late = fleet.filter(b => b.status === 'LATE').length;
+      const ontime = fleet.filter(b => b.status === 'ONTIME').length;
+      const stopped = fleet.filter(b => b.stopped).length;
+      const atStop = fleet.filter(b => b.atStop).length;
+      const occActive = fleet.filter(b => b.occ && b.occ !== 'Empty').length;
+      const detoured = Object.values(routes).filter(r => r.det).length;
+      const cards = [
+        ['buses live', n, ''],
+        ['on time / late', ontime + ' / ' + late, late ? Math.round(late/n*100)+'% late' : 'all on time'],
+        ['stopped', stopped, atStop + ' at a stop, ' + (stopped-atStop) + ' elsewhere'],
+        ['occupancy &gt; empty', occActive, occActive ? '' : 'all read Empty'],
+        ['routes detoured', detoured + ' / ' + Object.keys(routes).length, 'from _DET_ trace'],
+      ];
+      document.getElementById('stats').innerHTML = cards.map(([k,v,d]) =>
+        `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d||'&nbsp;'}</div></div>`).join('');
+    }
+
+    const COLS = [
+      ['veh','veh'], ['route','rt'], ['dir','dir'], ['status','status'], ['speed','mph'],
+      ['heading','hdg'], ['occ','occupancy'], ['stopId','stopId'], ['state','state'], ['lastStop','last stop'], ['comm','comm'],
+    ];
+    function renderFleet() {
+      const thead = document.querySelector('#fleet thead');
+      thead.innerHTML = '<tr>' + COLS.map(([k,l]) => `<th data-k="${k}">${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`).join('') + '</tr>';
+      thead.querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (sortKey===k) sortDir*=-1; else { sortKey=k; sortDir=1; } renderFleet(); });
+      const rows = [...fleet].sort((a,b) => {
+        const ka = sortKey==='state' ? (a.atStop?2:a.stopped?1:0) : a[sortKey];
+        const kb = sortKey==='state' ? (b.atStop?2:b.stopped?1:0) : b[sortKey];
+        return (ka>kb?1:ka<kb?-1:0) * sortDir;
+      });
+      document.querySelector('#fleet tbody').innerHTML = rows.map(b => {
+        const col = (routes[b.route]||{}).color || '#888';
+        const state = b.atStop ? `<span class="atstop">at stop</span>` : b.stopped ? `stopped${b.near?' ('+Math.round(b.near.d)+'m)':''}` : 'moving';
+        return `<tr>
+          <td>${b.veh||''}</td>
+          <td class="swatch"><span style="background:${col}"></span>${b.route}</td>
+          <td>${b.dir||''}</td>
+          <td class="${b.status==='LATE'?'late':''}">${b.status||''}</td>
+          <td>${b.speed??''}</td>
+          <td>${b.heading??''}</td>
+          <td>${b.occ||''}</td>
+          <td>${b.stopId||''}</td>
+          <td>${state}</td>
+          <td class="muted">${b.lastStop||''}</td>
+          <td>${b.comm||''}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function tickClock() { document.getElementById('clock').textContent = new Date().toLocaleString() + ' · polling fleet every 8s, logs every 5s'; }
+
+    (async () => {
+      tickClock(); setInterval(tickClock, 1000);
+      await loadStatic();
+      await pollLogs(); await pollFleet();
+      setInterval(pollLogs, 5000);
+      setInterval(pollFleet, 8000);
+    })();
+  </script>
+</body>
+</html>

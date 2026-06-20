@@ -316,6 +316,12 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
   - THREE COLLECTORS now run together (keep all alive while gathering): collect-vehicles (GPS +
     occupancy, ~12s), collect-detours (~15 min), collect-reliability (~2.5s/stop). Crowding stories
     ride on the Vehicles `occ` field (pending: is it ever non-zero?).
+  - OBSERVABILITY: `observe.html` (dev tool, run via the local server, open localhost:8000/observe.html)
+    shows collector health (log sizes + growth via HEAD), a live fleet table of every captured
+    variable (driver fields excluded), and live stats: on-time breakdown, occupancy>empty count, and
+    stopped buses split into AT-A-STOP vs elsewhere (speed~0 within 40 m of a GetAllStops location).
+    Early reads: ~17 of 18 stopped buses are at a designated stop (the at-stop inference is clean), and
+    occupancy reads all-Empty so far (likely not live - watch over peak before building crowding).
 - [x] **3. Calm motion (DONE + deployed 2026-06-20).** index.html glides each bus from its last
       drawn position to its new (snapped/pinned) target over the poll interval via requestAnimationFrame
       (`anim` map keyed per vehicle, `lerp`/`curPos`, GLIDE_MS=10000). Draws on every poll too, not
