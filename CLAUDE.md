@@ -188,9 +188,11 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       - PARKED refinements (not blocking, Erik's call later): residual tangle just NW of the
         hub box (river crossing) + crisp ~5 entry gates; residual double-tracks vs real one-way
         couplets; even-spacing / smoothing fine-tune; hub box styling (quiet grey placeholder).
-      - Superseded debug pages/scripts safe to prune: debug-corridors, spread-preview,
-        spike-division, match-preview, match-spread-preview; scripts detect-corridors,
-        spike-division, diag-junctions.
+      - Pruned 2026-06-19 (superseded rung-1.5 scratch, in git history): debug-corridors,
+        spread-preview, spike-division, match-preview, match-spread-preview pages; scripts
+        detect-corridors, spike-division, diag-junctions. KEPT: lib-corridors.mjs (match-routes
+        imports it), spread-routes.mjs (makes the editor's pre-spread starting geometry).
+        Live HTML now: index.html (deployed), editor.html, polish-preview.html.
 - [ ] **2. Live buses (NEXT, the point of the map).** Wire `rapid.js` (committed, ready:
       `fetchVehicles`/`fetchRoutes`/`fetchAllVehicles`/`pollVehicles`; already strips DriverName)
       into index.html. Live dots from GetAllVehiclesForRoutes (CORS open, call direct from the
