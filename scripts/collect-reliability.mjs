@@ -57,7 +57,7 @@ let idx = 0, polls = 0, written = 0, errors = 0, cycles = 0;
 const startedAt = Date.now();
 let stopped = false;
 
-const repoll = new Map(); // stopId -> due time (re-poll a stop right after an imminent departure)
+const repoll = new Map(); // stopId -> array of due times (re-polls bracketing a departure)
 
 async function pollStop(stopId) {
   let j;
@@ -79,8 +79,12 @@ async function pollStop(stopId) {
         // (the truest "actual" available). Dedup key includes the dev minute so we
         // re-log as the prediction evolves.
         if (sched && sched > now && sched <= now + 150000) {
-          const due = sched + 90000;
-          if (!repoll.has(stopId) || due < repoll.get(stopId)) repoll.set(stopId, due);
+          // two re-polls bracketing departure: +20s catches on-time buses while
+          // they're still briefly listed, +100s catches the lingerers (late ones).
+          // This is what de-biases the measured set (on-time buses otherwise vanish).
+          const dues = repoll.get(stopId) || [];
+          for (const d of [sched + 20000, sched + 100000]) if (!dues.includes(d)) dues.push(d);
+          repoll.set(stopId, dues);
         }
         const devMinB = d.Dev ? String(d.Dev).slice(0, 5) : '';
         const key = `${stopId}|${tripId}|${sched}|${done ? 1 : 0}|${act || ''}|${devMinB}`;
@@ -111,8 +115,12 @@ async function pollStop(stopId) {
 async function drainRepolls() {
   if (stopped) return;
   const now = Date.now();
-  for (const [stopId, due] of repoll) {
-    if (due <= now) { repoll.delete(stopId); pollStop(stopId); }
+  for (const [stopId, dues] of repoll) {
+    if (dues.some(d => d <= now)) {
+      const remaining = dues.filter(d => d > now);
+      if (remaining.length) repoll.set(stopId, remaining); else repoll.delete(stopId);
+      pollStop(stopId);
+    }
   }
 }
 

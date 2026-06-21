@@ -84,6 +84,9 @@
       <div class="sec">route reliability <span class="muted">(late share, from the accumulated GPS log · click to pin a route everywhere)</span></div>
       <div class="card"><div id="rank-rows" class="muted">accumulating...</div></div>
 
+      <div class="sec">late % by hour of day <span class="muted">(from the accumulated GPS log · the PM peak)</span></div>
+      <div class="card"><svg id="byhour" width="100%" viewBox="0 0 1000 150" style="display:block"></svg></div>
+
       <div class="sec">live buses <span class="muted" id="fleetnote"></span></div>
       <div class="tbl-wrap"><table id="fleet"><thead></thead><tbody></tbody></table></div>
     </section>
@@ -458,6 +461,28 @@
       onHover('#fleet tbody', e=>{ const tr=e.target.closest('tr'); return tr?tr.dataset.route:undefined; });
       onHover('#rank-rows', e=>{ const row=e.target.closest('.rrow'); return row?row.dataset.route:undefined; });
     }
+    // Late % by hour of day from the accumulated log: the PM-peak degradation.
+    async function renderByHour() {
+      const svg = document.getElementById('byhour'); if (!svg || !routesFinal) return;
+      let log; try { log = await loadLog(); } catch { return; }
+      const drawn = new Set(routesFinal.features.filter(f => !f.properties.kind).map(f => String(f.properties.routeId)));
+      const h = {};
+      for (const o of log) { if (!drawn.has(String(o.routeId))) continue; if (o.status!=='ONTIME'&&o.status!=='LATE') continue;
+        const k = new Date(o.fixTime).getHours(); const x = h[k] = h[k]||{n:0,late:0}; x.n++; if(o.status==='LATE')x.late++; }
+      const hours = Object.keys(h).map(Number).sort((a,b)=>a-b).filter(k => h[k].n>=20);
+      if (!hours.length) return;
+      const W=1000,H=150,padL=30,padR=10,padT=14,padB=22, x0=Math.min(...hours), x1=Math.max(...hours);
+      const bw=(W-padL-padR)/(x1-x0+1), maxP=Math.max(0.35,...hours.map(k=>h[k].late/h[k].n)), nowH=new Date().getHours();
+      const y=p=>(H-padB)-(p/maxP)*(H-padB-padT);
+      let g='';
+      for (const p of [0,0.1,0.2,0.3]) { if (p>maxP) continue;
+        g+=`<line x1="${padL}" y1="${y(p).toFixed(1)}" x2="${W-padR}" y2="${y(p).toFixed(1)}" stroke="#eee" stroke-width="0.5"/><text x="${padL-6}" y="${(y(p)+4).toFixed(1)}" text-anchor="end" font-size="10" fill="#8a8a85">${Math.round(p*100)}%</text>`; }
+      for (const k of hours) { const p=h[k].late/h[k].n, bx=padL+(k-x0)*bw;
+        g+=`<rect x="${(bx+1).toFixed(1)}" y="${y(p).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${((H-padB)-y(p)).toFixed(1)}" fill="${k===nowH?'#c23b34':'#dba9a5'}" rx="1"/>`;
+        g+=`<text x="${(bx+bw/2).toFixed(1)}" y="${H-padB+14}" text-anchor="middle" font-size="10" fill="#8a8a85">${k}</text>`; }
+      svg.innerHTML = g;
+    }
+
     // Late share per route from the ACCUMULATED log (not the session) so the ranking
     // is day-scale and stable. Drawn routes only (drops hidden 9999 etc.), min sample.
     async function renderRanking() {
@@ -479,8 +504,8 @@
       tickClock(); setInterval(tickClock, 1000);
       wireBeeswarm(); wirePanels();
       await loadStatic();
-      await pollLogs(); await pollFleet(); await pollReliability(); renderRanking();
-      setInterval(renderRanking, 30000);
+      await pollLogs(); await pollFleet(); await pollReliability(); renderRanking(); renderByHour();
+      setInterval(() => { renderRanking(); renderByHour(); }, 30000);
       setInterval(pollLogs, 5000);
       setInterval(pollFleet, 8000);
       setInterval(pollReliability, 15000);
