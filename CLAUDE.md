@@ -355,10 +355,18 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     INTERROGATION (2026-06-20): one shared route-selection model across the whole dashboard - hover
     any dot/row/line to light up that route everywhere and fade the rest; CLICK to PIN it (sticky,
     click empty space to release). Wired on the beeswarm (+ a tooltip: route name, the dot's dev/kind/
-    sched/stop, and a route rollup), the fleet map, the fleet table, the tracks, and a new RELIABILITY
-    RANKING panel (routes ranked by late share, accumulated this session from OpStatus, clickable to
-    pin) - which makes the bimodal-punctuality insight live and doubles as a route list. The
-    stressed-corridor convergence stays a doc finding, not a live panel (synthesized, would over-claim).
+    sched/stop, and a route rollup), the fleet map, the fleet table, the tracks, and the RELIABILITY
+    RANKING panel. The string-line is single-route so it gets per-TRIP interrogation instead (hover a
+    trip to isolate it + a tooltip of direction/start/duration). The stressed-corridor convergence
+    stays a doc finding, not a live panel (synthesized, would over-claim).
+    LATER ADDITIONS (2026-06-20): the RELIABILITY RANKING is now computed from the ACCUMULATED log
+    (day-scale late share, drawn routes only, min 20 readings) not the session - the session version
+    was noise right after a reload. Added a LATE % BY HOUR panel (PM-peak: ~3% AM climbing to ~33%
+    late afternoon, from the log). And the reliability collector now does a TWO-SHOT re-poll (+20s and
+    +100s after an imminent departure, not one shot at +90s) to de-bias the measured beeswarm: the
+    +20s catch grabs on-time buses while they're still briefly listed (they otherwise vanish before we
+    look), the +100s catch grabs the lingering late ones. Improves measured coverage going forward;
+    true elimination of the bias would need disappearance-tracking (a bigger change, deferred).
     `scripts/build-stringline.mjs [routeId] [--hours N]` is kept as an OFFLINE Marey builder (writes
     data/stringline.json) for windows too large for the browser; the standalone stringline.html was
     folded into the dashboard tab and removed.
