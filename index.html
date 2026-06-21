@@ -182,6 +182,36 @@
         paint: { 'circle-radius': 5, 'circle-color': '#fff', 'circle-stroke-color': '#111', 'circle-stroke-width': 2 },
       }, firstLabel);
 
+      // Stops (rung 4). Drawn from the committed data/stops.geojson. Calm and
+      // zoom-gated so the whole-system view stays clean: nothing at low zoom,
+      // timepoints (schedule anchors) fade in first (~z13), all 1493 stops only
+      // when zoomed right in (~z15+). Small near-white dots with a hairline so they
+      // recede under the routes and buses. (Rolling proximity emphasis is a later pass.)
+      map.addSource('stops', { type: 'geojson', data: './data/stops.geojson' });
+      map.addLayer({
+        id: 'stops', type: 'circle', source: 'stops',
+        paint: {
+          'circle-color': '#ffffff',
+          'circle-stroke-color': ['case', ['get', 'timepoint'], '#888888', '#bbbbbb'],
+          'circle-stroke-width': 1,
+          'circle-radius': ['interpolate', ['linear'], ['zoom'],
+            12, ['case', ['get', 'timepoint'], 2, 1.4],
+            16, ['case', ['get', 'timepoint'], 4, 3],
+            18, ['case', ['get', 'timepoint'], 6, 4.5],
+          ],
+          // one zoom interpolate (MapLibre forbids two), case outputs tier by timepoint:
+          // timepoints appear ~z13, all stops ~z15.
+          'circle-opacity': ['interpolate', ['linear'], ['zoom'],
+            12, 0, 13, ['case', ['get', 'timepoint'], 0.9, 0],
+            15, ['case', ['get', 'timepoint'], 0.95, 0.55], 17, 1,
+          ],
+          'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'],
+            12, 0, 13, ['case', ['get', 'timepoint'], 0.7, 0],
+            15, ['case', ['get', 'timepoint'], 0.8, 0.5], 17, 0.9,
+          ],
+        },
+      }, firstLabel);
+
       // Live buses. The source starts empty and is fed by the poller (see below);
       // each bus is a colored dot in its route's color with a white casing so it
       // reads on top of the route lines. Added with no beforeId so the dots sit
@@ -438,11 +468,12 @@
       }
       const ids = Object.keys(colorById);
       if (!ids.length) return;
-      // Stop locations for the at-stop test (loaded once; CORS open). If it fails,
-      // at-stop simply never triggers and the halo never shows. Non-blocking.
-      fetch('https://connect.ridetherapid.org/InfoPoint/rest/Stops/GetAllStops')
+      // Stop locations for the at-stop test, from the same committed stops.geojson
+      // the map draws (one source of truth, no runtime API call). Non-blocking; if
+      // it fails, at-stop simply never triggers and the halo never shows.
+      fetch('./data/stops.geojson')
         .then((r) => r.json())
-        .then((s) => { stopsArr = s.filter((x) => x.Latitude != null).map((x) => [x.Longitude, x.Latitude]); })
+        .then((g) => { stopsArr = g.features.map((f) => f.geometry.coordinates); })
         .catch((e) => console.warn('stops load failed (at-stop disabled)', e));
       pollVehicles(ids, renderVehicles, {
         intervalMs: 10000,

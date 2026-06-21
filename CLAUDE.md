@@ -390,7 +390,15 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       bus forward along heading/route by speed so the dot shows where it is NOW, fighting both glide
       lag and feed latency (cost: overshoot at stops/turns, correction on next poll). Calm map is fine
       as-is; extrapolation earns its keep on the mobile "is my bus here now" face.
-- [ ] **4. Stops.** Parse `stops.txt` to GeoJSON. Zoom-based fade-in.
+- [~] **4. Stops (FIRST CUT done + deployed 2026-06-20; rolling-proximity pass still to do).**
+      `scripts/build-stops.mjs` fetches GetAllStops once -> `data/stops.geojson` (COMMITTED, 1493
+      stops, 270 timepoints, carries `timepoint`). index.html draws a calm zoom-gated `stops` circle
+      layer (white fill, hairline stroke, below buses/labels): nothing at the whole-system view,
+      timepoints fade in ~z13, all stops ~z15+ (tiered via one zoom interpolate with `case` outputs on
+      `timepoint`). Also now the single source for the at-stop test (replaced the runtime GetAllStops
+      fetch). Styling/zoom thresholds are TUNABLE (Erik: "might need tuning"). NEXT (agreed phase two):
+      a rolling proximity zone around each live bus showing the next/previous few stops in full while
+      the rest of the line's stops stay diminished (after the zoom rules).
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
 - [ ] **6. Phase two (mobile).** Scout arrivals endpoint, build wayfinding face.
 
