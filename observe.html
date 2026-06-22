@@ -153,6 +153,7 @@
       const r = activeRoute();
       document.querySelectorAll('#beeswarm circle').forEach(c => c.style.opacity = r==null?0.9:(c.dataset.route===r?0.95:0.07));
       document.querySelectorAll('#busdots circle').forEach(c => c.style.opacity = r==null?1:(c.dataset.route===r?1:0.12));
+      document.querySelectorAll('#minimap path[data-route]').forEach(p => { const on=r!=null&&p.dataset.route===r; p.style.opacity = r==null?0.3:(on?0.95:0.05); p.style.strokeWidth = on?2:1; });
       document.querySelectorAll('#tr-svg path[data-route]').forEach(p => p.style.opacity = r==null?0.16:(p.dataset.route===r?0.55:0.04));
       document.querySelectorAll('#fleet tbody tr').forEach(tr => tr.style.opacity = r==null?1:(tr.dataset.route===r?1:0.32));
       document.querySelectorAll('#rank-rows .rrow').forEach(el => el.classList.toggle('sel', r!=null && el.dataset.route===r));
@@ -194,14 +195,14 @@
       for (const f of g.features) {
         if (f.properties.kind) continue;
         const segs = f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : [f.geometry.coordinates];
-        for (const seg of segs) { lines.push({ c: seg, color: f.properties.color }); for (const [x,y] of seg) { if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; } }
+        for (const seg of segs) { lines.push({ c: seg, color: f.properties.color, route: String(f.properties.routeId) }); for (const [x,y] of seg) { if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; } }
       }
       const lngR = maxX-minX, latR = maxY-minY, cos = Math.cos((minY+latR/2)*Math.PI/180);
       MM_H = Math.round(MM_W * (latR/(lngR*cos)));
       proj = (lng,lat) => [ ((lng-minX)/lngR)*MM_W, ((maxY-lat)/latR)*MM_H ];
       const paths = lines.map(L => {
         let d=''; L.c.forEach((p,i)=>{ const [x,y]=proj(p[0],p[1]); d+=(i?'L':'M')+x.toFixed(1)+','+y.toFixed(1); });
-        return `<path d="${d}" fill="none" stroke="${L.color}" stroke-width="1" opacity="0.3"/>`;
+        return `<path d="${d}" fill="none" stroke="${L.color}" stroke-width="1" opacity="0.3" data-route="${L.route}"/>`;
       }).join('');
       for (const id of ['minimap','tr-svg']) { const svg = document.getElementById(id); if (svg) svg.setAttribute('viewBox', `0 0 ${MM_W} ${MM_H}`); }
       const mm = document.getElementById('minimap');
