@@ -192,7 +192,12 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
         spread-preview, spike-division, match-preview, match-spread-preview pages; scripts
         detect-corridors, spike-division, diag-junctions. KEPT: lib-corridors.mjs (match-routes
         imports it), spread-routes.mjs (makes the editor's pre-spread starting geometry).
-        Live HTML now: index.html (deployed), editor.html, polish-preview.html.
+        Live HTML now: index.html (deployed map), observe.html (local dashboard, 4 tabs), editor.html +
+        polish-preview.html (geometry pipeline tools), reconstruct-preview.html (GPS reconstruction
+        preview). stringline.html was folded into the dashboard string-line tab and removed.
+        Scripts: build-routes, match-routes, spread-routes, polish-routes, lib-corridors (geometry
+        pipeline); collect-vehicles, collect-detours, collect-reliability (the 3 live collectors);
+        find-coverage-gaps, reconstruct-routes, build-stringline (GPS analysis); build-stops (rung 4).
 - [x] **2. Live buses (DONE + deployed 2026-06-19, commit b4a1e31; pinning follow-up after).**
       `rapid.js` wired into index.html (the inline script is now `type="module"` so it can
       `import { pollVehicles }`). One GetAllVehiclesForRoutes call per sweep for the 25 drawn
@@ -355,8 +360,9 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     INTERROGATION (2026-06-20): one shared route-selection model across the whole dashboard - hover
     any dot/row/line to light up that route everywhere and fade the rest; CLICK to PIN it (sticky,
     click empty space to release). Wired on the beeswarm (+ a tooltip: route name, the dot's dev/kind/
-    sched/stop, and a route rollup), the fleet map, the fleet table, the tracks, and the RELIABILITY
-    RANKING panel. The string-line is single-route so it gets per-TRIP interrogation instead (hover a
+    sched/stop, and a route rollup), the fleet map (the active route's LINE lights up too, not just its
+    buses), the fleet table, the tracks, and the RELIABILITY RANKING panel. The string-line is
+    single-route so it gets per-TRIP interrogation instead (hover a
     trip to isolate it + a tooltip of direction/start/duration). The stressed-corridor convergence
     stays a doc finding, not a live panel (synthesized, would over-claim).
     LATER ADDITIONS (2026-06-20): the RELIABILITY RANKING is now computed from the ACCUMULATED log
