@@ -304,12 +304,24 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     KML to data/detour-traces/ (both gitignored). The archive doubles as the official-geometry set for
     the three-way base compare. Verified: 15 routes detoured, 55 messages, 34 traces archived. Run it
     alongside the GPS collector: `node scripts/collect-detours.mjs`.
-  - NEXT STEPS (not built yet): (2b) map-match the reconstructed patterns onto OSM
-    roads with the existing match-routes machinery (also removes the raw-GPS wobble). (3) THREE-WAY
-    base head-to-head (GTFS vs KML vs reconstructed GPS), then decide how the winning base reaches the
-    screen: enrich the editor's starting geometry for hand-finish, vs a fuller algorithmic finish.
-    Re-run reconstruct on a fuller (weekday + weekend) log first; several routes (3, 24, 44, 51, ...)
-    had <3 trips in the weekend sample.
+  - COLLECTION COMPLETE (stopped 2026-06-22 ~16:30). Final dataset on THIS Mac (logs gitignored,
+    local only): vehicle-log ~446 MB / ~345k+ points, reliability-log ~36 MB, detour-log ~1.9 MB.
+    Span: Fri 6/19 night -> Mon 6/22 afternoon = a full Saturday + most of Sunday + a weekday daytime
+    (incl. start of PM peak). DO NOT restart the collectors unless deliberately extending the dataset
+    (the 3 collect-*.mjs + the `python3 -m http.server 8000` for the dashboard are all local processes
+    that die on lid-close; collection is intentionally OFF now).
+  - RECONSTRUCT RE-RUN on the full data (2026-06-22): 1772 usable trips -> 77 patterns across ALL 25
+    routes (was 28/15 on the Friday sample). Every route reconstructs, branches included (1->UM Health
+    West, 8/3/24->Target-Rivertown, 10->Pine Rest, 45->10 Laker variants). Only 33/34/27 sit at the
+    3-trip floor. Confirmed: the data is rich enough for the base-map work. Output
+    data/routes-reconstructed-debug.geojson (gitignored).
+  - NEXT STEPS (not built yet; data is ready, runs on THIS Mac since logs are local):
+    (2b) map-match the reconstructed patterns onto OSM roads with the existing match-routes machinery
+    (also removes the raw-GPS wobble). (3) THE THREE-WAY BASE HEAD-TO-HEAD (GTFS shapes vs official KML
+    traces in data/detour-traces/ vs reconstructed GPS) - the marquee next milestone - then decide how
+    the winning base reaches the screen: enrich the editor's starting geometry for hand-finish, vs a
+    fuller algorithmic finish. (Optional) commit a derived snapshot (reconstructed patterns) so the
+    distilled result is not hostage to this one machine's gitignored logs.
   - [DONE] STEP 2c: reliability sampler. `scripts/collect-reliability.mjs` rotates through the 270
     TIMEPOINT stops (IsTimePoint), one StopDepartures call every ~2.5s (~11 min/cycle), and logs each
     departure's schedule-vs-actual to data/reliability-log.ndjson (gitignored): sched (SDT), est (EDT),
@@ -408,10 +420,18 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
 - [ ] **5. Filter and focus.** Select a route, recede the rest. Quiet detail panel.
 - [ ] **6. Phase two (mobile).** Scout arrivals endpoint, build wayfinding face.
 
-## What the data shows so far (2026-06-20, ~17 h of one weekday)
+## What the data shows so far (numbers from 2026-06-20, ~17 h of one weekday)
 
-From ~84k vehicle positions, the reliability + detour logs, and the dashboard. One day,
-weekday-only; weekend will differ. Numbers are grounded but provisional.
+From ~84k vehicle positions, the reliability + detour logs, and the dashboard. The specific
+numbers below are from that ~17 h weekday slice; the FULL collected dataset is now larger (a full
+Saturday + most of Sunday + a weekday daytime, collection stopped 2026-06-22), so a refreshed
+analysis over the whole log would sharpen these, but the directional findings hold. Grounded but
+provisional (still effectively one weekday for the weekday-specific claims).
+
+KNOWN ISSUE (dashboard at scale): the vehicle log is now ~446 MB. observe.html's String-line and
+Tracks tabs fetch the WHOLE log into the browser (loadLog), so they are slow / may freeze at this
+size. Live + Deviation tabs are unaffected. TODO: window loadLog to a recent slice (e.g. last few
+hours) before those tabs are usable again on the full log.
 
 - **Punctuality is bimodal by route TYPE.** Late share of service time (from `OpStatus` across all
   position reports): chronically late = route 8 Prairie (30%), 4 Eastern (27%), 5 Wealthy (24%),
@@ -443,8 +463,16 @@ weekday-only; weekend will differ. Numbers are grounded but provisional.
   rest on focus) is a later refinement, not yet done.
 - **No build step.** `index.html` is served as-is. Netlify build command and
   publish dir are both empty.
-- **Local dev:** `python3 -m http.server 8000`, then open http://localhost:8000.
+- **Local dev:** `python3 -m http.server 8000`, then open http://localhost:8000. The dashboard
+  (observe.html) needs this server running to read the local logs; it serves index.html too. The
+  server is a local process that DIES on lid-close/sleep and does not auto-restart - if
+  localhost:8000 shows ERR_CONNECTION_REFUSED, the server is just down, restart it with that command
+  (the data is fine on disk). The deployed Netlify map is unaffected (it only needs the public API).
 - **Deploy:** `git add . && git commit -m "..." && git push`. That is the whole loop.
+- **Collectors / data collection:** the 3 `scripts/collect-*.mjs` are local background processes
+  (start with `caffeinate -i nohup node scripts/collect-X.mjs > /tmp/... &`). They also die on
+  lid-close. Collection is COMPLETE as of 2026-06-22 and intentionally OFF; only restart to extend
+  the dataset. Check: `pgrep -fl "collect-vehicles\|collect-detours\|collect-reliability"`.
 
 ## Data layer (key facts, do not get these wrong)
 
