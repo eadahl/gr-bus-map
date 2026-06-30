@@ -304,12 +304,21 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     KML to data/detour-traces/ (both gitignored). The archive doubles as the official-geometry set for
     the three-way base compare. Verified: 15 routes detoured, 55 messages, 34 traces archived. Run it
     alongside the GPS collector: `node scripts/collect-detours.mjs`.
-  - COLLECTION COMPLETE (stopped 2026-06-22 ~16:30). Final dataset on THIS Mac (logs gitignored,
-    local only): vehicle-log ~446 MB / ~345k+ points, reliability-log ~36 MB, detour-log ~1.9 MB.
-    Span: Fri 6/19 night -> Mon 6/22 afternoon = a full Saturday + most of Sunday + a weekday daytime
-    (incl. start of PM peak). DO NOT restart the collectors unless deliberately extending the dataset
-    (the 3 collect-*.mjs + the `python3 -m http.server 8000` for the dashboard are all local processes
-    that die on lid-close; collection is intentionally OFF now).
+  - COLLECTION (intermittent Fri 6/19 -> Tue 6/30, whenever the Mac was awake; re-run a few times).
+    Logs are gitignored, local to THIS Mac: vehicle-log ~446 MB / ~1.7M rows, reliability-log ~36 MB,
+    detour-log ~1.9 MB. Plenty for the base-map work (a full Saturday + most of Sunday + weekday
+    daytimes incl. PM peak).
+    - DUPLICATE-ROW CAVEAT: across restarts there were stretches where TWO collector instances
+      overlapped and double-logged, so a meaningful fraction of the rows are EXACT duplicates. The raw
+      row/point counts and file size are therefore inflated. Harmless to reconstruction (reconstruct-
+      routes dedups by trip+time+<8 m proximity), but dedup the log (e.g. `sort -u`) before trusting
+      raw counts or feeding the dashboard's loadLog.
+    - RESTART GOTCHA: starting a collector without killing the previous one STACKS instances ->
+      double logging. Always `pkill -f collect-X.mjs` first. And `pgrep -f collect-X.mjs` counts the
+      caffeinate wrapper AND the node proc (2 per collector even when only one is really running);
+      count real instances with `ps -Ao args | grep scripts/collect-X | grep -v caffeinate`.
+    - These + the `python3 -m http.server 8000` dashboard server are all local processes that die on
+      lid-close and don't auto-restart. Stop everything with the three `pkill -f collect-X.mjs`.
   - RECONSTRUCT RE-RUN on the full data (2026-06-22): 1772 usable trips -> 77 patterns across ALL 25
     routes (was 28/15 on the Friday sample). Every route reconstructs, branches included (1->UM Health
     West, 8/3/24->Target-Rivertown, 10->Pine Rest, 45->10 Laker variants). Only 33/34/27 sit at the
