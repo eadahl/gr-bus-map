@@ -324,13 +324,58 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
     West, 8/3/24->Target-Rivertown, 10->Pine Rest, 45->10 Laker variants). Only 33/34/27 sit at the
     3-trip floor. Confirmed: the data is rich enough for the base-map work. Output
     data/routes-reconstructed-debug.geojson (gitignored).
-  - NEXT STEPS (not built yet; data is ready, runs on THIS Mac since logs are local):
-    (2b) map-match the reconstructed patterns onto OSM roads with the existing match-routes machinery
-    (also removes the raw-GPS wobble). (3) THE THREE-WAY BASE HEAD-TO-HEAD (GTFS shapes vs official KML
-    traces in data/detour-traces/ vs reconstructed GPS) - the marquee next milestone - then decide how
-    the winning base reaches the screen: enrich the editor's starting geometry for hand-finish, vs a
-    fuller algorithmic finish. (Optional) commit a derived snapshot (reconstructed patterns) so the
-    distilled result is not hostage to this one machine's gitignored logs.
+  - [~] STEP 3: THREE-WAY BASE HEAD-TO-HEAD, first pass (started 2026-07-10; not a verdict yet).
+    `scripts/compare-bases.mjs` builds one combined GeoJSON (`data/base-compare.geojson`, gitignored;
+    features tagged `source: gtfs|kml|gps`) plus per-route length/piece-count stats
+    (`data/base-compare-stats.json`). KML source picks the CURRENT trace file per route (newest
+    `_DET_` timestamp, else the plain file) from `data/detour-traces/` - re-fetch any missing current
+    traces first (the archive only has what collect-detours.mjs happened to see; a route's trace can
+    rotate after collection stops). View: `compare-preview.html` (route selector, per-source toggles,
+    per-route stats incl. a length-ratio warning). Run order: re-run `reconstruct-routes.mjs` on the
+    full log first, then `compare-bases.mjs`.
+    - HEADLINE FINDING: GTFS and KML agree closely on total length (KML is authoritative but comes as
+      MANY tiny disconnected segments per route, e.g. 40-70 pieces - fragmented, would need stitching
+      before it's usable as a clean base). Both structurally miss the real branches (confirms the
+      original motivation). GPS reconstruction correctly surfaces the branches (Rivertown, Pine Rest,
+      UM Health West, etc.) but, before cleanup, 14 of 25 routes came back 1.7x-7.2x LONGER than GTFS -
+      a real bug, not just noise.
+    - ROOT CAUSE (confirmed by code reading + visual inspection): `reconstruct-routes.mjs` clusters
+      trips into a pattern by grid-signature (Jaccard) overlap ALONE, with `seedSig` frozen at the
+      first (longest) trip and no length check. A trip sharing most of a pattern's cells (e.g. the same
+      corridor plus a deadhead tail, or a longer variant) joins in even if much longer. Step 4 then
+      resamples every member trip to a FIXED N points and averages POINT-BY-INDEX - blending trips of
+      different physical extents at the same index produces one incoherent, wandering, too-long line.
+    - FIXES APPLIED to reconstruct-routes.mjs (both kept, both net-positive, neither a full fix):
+      (a) HUB EXCLUSION: drop GPS points inside the same hub zone `polish-routes.mjs` already clips at
+      before building trip coords (downtown convergence is exactly where path-per-trip variability -
+      bay pull-ins, layovers - is highest). Modest, safe improvement (e.g. route 90: 58->50 km played
+      against ~31 km GTFS), route 51/DASH unchanged at a clean 1.0x match.
+      (b) LENGTH-TRIM AT STEP 4 (not at clustering - see below): after clustering (unchanged), drop
+      member trips whose length falls outside `LEN_RATIO_MAX` (1.6x) of the pattern's MEDIAN length,
+      right before the resample/median, so outliers never reach the averaging math. New `trimmed`
+      property records how many were dropped per pattern (39 of 91 patterns had trims on the full log).
+    - TRIED AND REVERTED: a join-time length gate (only join a pattern if within the ratio of its
+      running average) made things WORSE - it fragmented previously-clean routes (route 90: 3->13
+      patterns, route 51: 1->6) because it interacts badly with the frozen `seedSig` + length-descending
+      processing order. Lesson: gate membership at the averaging step, not at the spatial-clustering
+      step (Jaccard is still the right clustering signal on its own).
+    - STILL UNRESOLVED (14/25 routes still flagged after both fixes; NOT further tuned this pass):
+      some routes (route 24 is the clearest case, unchanged by both fixes: 168.8 -> 173.8 km vs 52.2 km
+      GTFS) have GENUINE LOCAL divergence, not just length variance - real alternate loop variants
+      (Wyoming/Grandville area) that share enough of a long shared trunk to pass SIM_THRESHOLD (0.5)
+      Jaccard in aggregate while diverging in a side section, so the median visibly zigzags between the
+      two paths at that shared position. A whole-trip length filter can't catch this (both variants are
+      similar total length). Needs either a stricter/local-divergence-aware clustering method or
+      map-matching to pull each divergent branch onto its own road (the planned 2b) - deferred, not
+      solved here.
+    - VERDICT (provisional, not final): no single source wins outright. GTFS/KML are clean single lines
+      (KML needs stitching) but miss branches. GPS finds the branches but needs the unresolved
+      local-divergence issue fixed (map-matching, most likely) before its patterns are trustworthy
+      geometry. Next: (2b) map-match the reconstructed patterns onto OSM roads (also removes the raw-GPS
+      wobble, may help the divergence issue by snapping to distinct real roads) - THEN revisit this
+      compare with map-matched patterns. Optionally stitch KML into continuous lines for a fairer look
+      at that candidate too. (Optional) commit a derived snapshot (reconstructed patterns) so the
+      distilled result is not hostage to this one machine's gitignored logs.
   - [DONE] STEP 2c: reliability sampler. `scripts/collect-reliability.mjs` rotates through the 270
     TIMEPOINT stops (IsTimePoint), one StopDepartures call every ~2.5s (~11 min/cycle), and logs each
     departure's schedule-vs-actual to data/reliability-log.ndjson (gitignored): sched (SDT), est (EDT),

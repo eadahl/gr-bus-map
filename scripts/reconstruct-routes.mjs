@@ -34,6 +34,23 @@ const SIG_CELL_M = 120;         // grid-signature cell size for path similarity
 const SIM_THRESHOLD = 0.5;      // Jaccard overlap to join a trip to a pattern
 const MIN_PATTERN_TRIPS = 3;    // a pattern must be backed by this many trips (no one-offs)
 const RESAMPLE_N = 150;         // points in each reconstructed centerline
+const LEN_RATIO_MAX = 1.6;      // AFTER clustering (step 3, unchanged - spatial Jaccard is the
+                                 // right signal for grouping), drop member trips whose length
+                                 // falls outside this ratio of the pattern's MEDIAN length before
+                                 // resampling (step 4). A join-time length gate was tried and made
+                                 // things worse (fragmented clean routes like 51/90 into many small
+                                 // patterns, since it interacts badly with the frozen seedSig +
+                                 // length-descending processing order). Trimming post-hoc, right
+                                 // before the index-by-index median math that actually blends two
+                                 // different physical extents into one wandering line, is surgical:
+                                 // it doesn't touch clustering, only which members feed the average.
+
+// Hub zone (same box the deployed pipeline clips at, scripts/polish-routes.mjs) - GPS
+// inside the downtown convergence is where trip paths through the hub vary the most
+// (bay pull-ins, layovers, which of ~19 routes' streets a bus threads), so raw points
+// there corrupt clustering same as they'd corrupt display. Drop them before tracing.
+const ZONE_CENTER_LL = [-85.67302, 42.95863];
+const ZONE_HALF_W_M = 111, ZONE_HALF_H_M = 217.5, ZONE_CR_M = Math.min(ZONE_HALF_W_M, ZONE_HALF_H_M) * 0.5;
 
 const M_PER_DEG = 111320;
 const COS_LAT = Math.cos((42.96 * Math.PI) / 180);
@@ -44,6 +61,15 @@ function distM(a, b) {
   const dx = (a[0] - b[0]) * COS_LAT * M_PER_DEG;
   const dy = (a[1] - b[1]) * M_PER_DEG;
   return Math.hypot(dx, dy);
+}
+
+// Same rounded-rect test as polish-routes.mjs's inZone, in meters from the hub center.
+function inHubZone(p) {
+  const dx = Math.abs((p[0] - ZONE_CENTER_LL[0]) * COS_LAT * M_PER_DEG);
+  const dy = Math.abs((p[1] - ZONE_CENTER_LL[1]) * M_PER_DEG);
+  if (dx > ZONE_HALF_W_M || dy > ZONE_HALF_H_M) return false;
+  if (dx <= ZONE_HALF_W_M - ZONE_CR_M || dy <= ZONE_HALF_H_M - ZONE_CR_M) return true;
+  return (dx - (ZONE_HALF_W_M - ZONE_CR_M)) ** 2 + (dy - (ZONE_HALF_H_M - ZONE_CR_M)) ** 2 <= ZONE_CR_M ** 2;
 }
 function pathLen(c) { let L = 0; for (let i = 1; i < c.length; i++) L += distM(c[i - 1], c[i]); return L; }
 function median(arr) { const s = [...arr].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
@@ -102,6 +128,7 @@ for (const obs of rawTrips.values()) {
   const coords = [];
   for (const o of obs) {
     const p = [o.lon, o.lat];
+    if (inHubZone(p)) continue;       // hub convergence: too path-variable to trust (bay pull-ins, layovers)
     const prev = coords[coords.length - 1];
     if (prev) {
       const d = distM(prev, p);
@@ -144,7 +171,17 @@ for (const [, gtrips] of groups) {
 // ── 4. build one median centerline per pattern ────────────────────────────────
 const features = [];
 for (const p of patterns) {
-  const resampled = p.trips.map((t) => resample(t.coords, RESAMPLE_N));
+  // Trim length-outlier members (a deadhead tail or a longer variant that still
+  // shared enough cells to cluster in) before resampling: mixing very different
+  // physical extents into the index-by-index median produces one wandering,
+  // too-long line. Trim relative to the MEDIAN member length, and only if the
+  // pattern still clears MIN_PATTERN_TRIPS afterward - otherwise keep everyone,
+  // a thin pattern is better than an empty one.
+  const lens = p.trips.map((t) => t.len).sort((a, b) => a - b);
+  const midLen = lens[Math.floor(lens.length / 2)];
+  const kept = p.trips.filter((t) => t.len <= midLen * LEN_RATIO_MAX && t.len >= midLen / LEN_RATIO_MAX);
+  const members = kept.length >= MIN_PATTERN_TRIPS ? kept : p.trips;
+  const resampled = members.map((t) => resample(t.coords, RESAMPLE_N));
   const line = [];
   for (let i = 0; i < RESAMPLE_N; i++) {
     line.push([median(resampled.map((r) => r[i][0])), median(resampled.map((r) => r[i][1]))]);
@@ -156,6 +193,7 @@ for (const p of patterns) {
       color: colorById[p.routeId] || '#888888',
       dir: p.dir,
       trips: p.trips.length,                          // weight: how scheduled this pattern is
+      trimmed: p.trips.length - members.length,       // outlier-length members excluded from the geometry
       dests: [...p.dests].filter(Boolean).join(' / '),
       lenKm: +(pathLen(line) / 1000).toFixed(2),
     },

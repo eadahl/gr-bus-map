@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Three-way base compare - GTFS vs KML vs GPS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+    .panel {
+      position: absolute; top: 12px; left: 12px; z-index: 1;
+      font: 12px/1.5 ui-monospace, 'IBM Plex Mono', Menlo, monospace;
+      color: #111; background: #fff; border: 1px solid #111; border-radius: 2px;
+      padding: 10px 12px; width: 300px;
+    }
+    .panel b { font-weight: 600; }
+    select { font: inherit; width: 100%; margin: 4px 0 8px; padding: 3px; }
+    .row { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+    .sw { width: 22px; height: 0; border-top-width: 3px; flex-shrink: 0; }
+    button { font: inherit; cursor: pointer; padding: 2px 6px; border: 1px solid #111;
+      background: #fff; border-radius: 2px; margin-left: auto; }
+    button.off { opacity: 0.4; }
+    .stats { margin-top: 10px; border-top: 1px solid #ddd; padding-top: 8px; }
+    .stats div { display: flex; justify-content: space-between; }
+    .stats .lab { color: #777; }
+    .warn { color: #b3261e; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <b>Three-way base compare</b>
+    <select id="routeSel"></select>
+
+    <div class="row"><span class="sw" style="border-color:#111; border-top-style:dashed"></span> GTFS shape <button id="t-gtfs">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#0af; border-top-style:dotted"></span> official KML <button id="t-kml">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#111"></span> GPS reconstructed <button id="t-gps">on</button></div>
+
+    <div class="stats" id="stats">loading...</div>
+  </div>
+
+  <script>
+    const POSITRON = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const FALLBACK = { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#fafafa' } }] };
+    const GR = [-85.6681, 42.9634];
+    let map, statsData = {};
+
+    function addLayers() {
+      if (!map || map.getSource('compare')) return;
+      try { map.addSource('compare', { type: 'geojson', data: './data/base-compare.geojson' }); } catch (e) { return; }
+
+      map.addLayer({
+        id: 'gtfs-line', type: 'line', source: 'compare', filter: ['==', ['get', 'source'], 'gtfs'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#111', 'line-width': 2, 'line-dasharray': [3, 2], 'line-opacity': 0.7 },
+      });
+      map.addLayer({
+        id: 'kml-line', type: 'line', source: 'compare', filter: ['==', ['get', 'source'], 'kml'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#0088ff', 'line-width': 2.5, 'line-dasharray': [1, 2], 'line-opacity': 0.8 },
+      });
+      map.addLayer({
+        id: 'gps-casing', type: 'line', source: 'compare', filter: ['==', ['get', 'source'], 'gps'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#fff', 'line-width': 5, 'line-opacity': 0.9 },
+      });
+      map.addLayer({
+        id: 'gps-line', type: 'line', source: 'compare', filter: ['==', ['get', 'source'], 'gps'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2.5 },
+      });
+      applyRoute();
+    }
+    function build(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GR, zoom: 11 });
+      map.on('styledata', addLayers);
+      map.on('load', addLayers);
+    }
+    build(POSITRON);
+    let fellBack = false;
+    const wd = setTimeout(() => { if (!fellBack && !map.isStyleLoaded()) { fellBack = true; map.remove(); build(FALLBACK); } }, 5000);
+    const iv = setInterval(() => { addLayers(); if (map.getSource('compare')) { clearInterval(iv); clearTimeout(wd); } }, 300);
+
+    function toggle(id, layers, btn) {
+      let on = true;
+      document.getElementById(btn).addEventListener('click', (e) => {
+        on = !on;
+        for (const l of layers) if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', on ? 'visible' : 'none');
+        e.target.textContent = on ? 'on' : 'off';
+        e.target.classList.toggle('off', !on);
+      });
+    }
+    toggle('gtfs', ['gtfs-line'], 't-gtfs');
+    toggle('kml', ['kml-line'], 't-kml');
+    toggle('gps', ['gps-casing', 'gps-line'], 't-gps');
+
+    function applyRoute() {
+      const r = document.getElementById('routeSel').value;
+      const f = r === 'all' ? null : ['==', ['get', 'routeId'], r];
+      map.setFilter('gtfs-line', f ? ['all', ['==', ['get', 'source'], 'gtfs'], f] : ['==', ['get', 'source'], 'gtfs']);
+      map.setFilter('kml-line', f ? ['all', ['==', ['get', 'source'], 'kml'], f] : ['==', ['get', 'source'], 'kml']);
+      map.setFilter('gps-line', f ? ['all', ['==', ['get', 'source'], 'gps'], f] : ['==', ['get', 'source'], 'gps']);
+      map.setFilter('gps-casing', f ? ['all', ['==', ['get', 'source'], 'gps'], f] : ['==', ['get', 'source'], 'gps']);
+      renderStats(r);
+    }
+    function renderStats(r) {
+      const el = document.getElementById('stats');
+      if (r === 'all') { el.innerHTML = '<div class="lab">select a route for stats</div>'; return; }
+      const s = statsData[r];
+      if (!s) { el.innerHTML = ''; return; }
+      const warn = (s.gps && s.gtfs && s.gps.km > s.gtfs.km * 1.6)
+        ? `<div class="warn">GPS total is ${(s.gps.km / s.gtfs.km).toFixed(1)}x GTFS length - likely a clustering artifact (a merged/mis-clustered pattern), inspect visually before trusting.</div>` : '';
+      el.innerHTML = `
+        <div><span class="lab">GTFS</span><span>${s.gtfs ? s.gtfs.pieces + ' shapes, ' + s.gtfs.km + ' km' : '-'}</span></div>
+        <div><span class="lab">KML</span><span>${s.kml ? s.kml.pieces + ' segs, ' + s.kml.km + ' km' + (s.kml.detoured ? ' (DET)' : '') : '-'}</span></div>
+        <div><span class="lab">GPS</span><span>${s.gps ? s.gps.patterns + ' patterns, ' + s.gps.km + ' km' : '-'}</span></div>
+        <div style="margin-top:4px" class="lab">GPS branches: ${s.gps ? s.gps.dests.join(', ') : '-'}</div>
+        ${warn}`;
+    }
+
+    fetch('./data/base-compare-stats.json').then(r => r.json()).then(d => {
+      statsData = d;
+      const sel = document.getElementById('routeSel');
+      const ids = Object.keys(d).sort((a, b) => (+a || 1e9) - (+b || 1e9));
+      sel.innerHTML = '<option value="all">all routes</option>' + ids.map(id => `<option value="${id}">route ${id}</option>`).join('');
+      sel.addEventListener('change', applyRoute);
+      if (map && map.getSource('compare')) applyRoute();
+    });
+  </script>
+</body>
+</html>

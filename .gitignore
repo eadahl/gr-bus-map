@@ -44,6 +44,10 @@ data/vehicle-log.ndjson
 data/coverage-gaps.geojson
 data/routes-reconstructed-debug.geojson
 
+# Three-way base head-to-head output from scripts/compare-bases.mjs (regenerable).
+data/base-compare.geojson
+data/base-compare-stats.json
+
 # Detour timeline log + archived route trace KMLs from collect-detours.mjs.
 data/detour-log.ndjson
 data/detour-traces/
