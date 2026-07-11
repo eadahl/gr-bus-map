@@ -186,6 +186,12 @@ for (const p of patterns) {
   for (let i = 0; i < RESAMPLE_N; i++) {
     line.push([median(resampled.map((r) => r[i][0])), median(resampled.map((r) => r[i][1]))]);
   }
+  if (process.env.DEBUG_LEN) {
+    const memLens = members.map((t) => t.len).sort((a, b) => a - b);
+    const memMid = memLens[Math.floor(memLens.length / 2)] / 1000;
+    const clen = pathLen(line) / 1000;
+    console.error(`  ${p.routeId.padEnd(5)} ${p.dir.padEnd(4)} n=${String(members.length).padStart(3)}  memberMedian=${memMid.toFixed(1)}km  centerline=${clen.toFixed(1)}km  inflation=${(clen / memMid).toFixed(2)}x  ${[...p.dests].filter(Boolean).join('/')}`);
+  }
   features.push({
     type: 'Feature',
     properties: {

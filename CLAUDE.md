@@ -392,13 +392,32 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       it needs a clustering-level fix (stricter SIM_THRESHOLD, or a local-divergence-aware method e.g.
       DTW), not a matching-level one. This closes off matching as a candidate fix; do not re-attempt it
       for this purpose.
-    - VERDICT (provisional, not final): no single source wins outright. GTFS/KML are clean single lines
-      (KML needs stitching) but miss branches. GPS + matching gives clean, road-following geometry with
-      real branch coverage on the ~11 of 25 routes that clustered cleanly, but the other 14 still need
-      the clustering-level fix above before they're trustworthy. Realistic next move: tighten
-      SIM_THRESHOLD (currently 0.5) and accept more/thinner patterns as the cost, then re-run this whole
-      chain (reconstruct -> match -> compare) and see how much of the flagged set clears. Optionally
-      stitch KML into continuous lines for a fairer look at that candidate too. (Optional) commit a
+    - *** ROOT CAUSE FOUND 2026-07-10 (OVERTURNS the clustering + averaging hypotheses above - those
+      were treating SYMPTOMS; do NOT keep tuning SIM_THRESHOLD / length-trim, that was a wrong track):
+      `tripId` IS REUSED ACROSS SERVICE DAYS. reconstruct-routes groups raw points by (routeId, tripId),
+      but the Avail feed's TripId is a schedule-slot/block id that repeats every day, so ONE "trip"
+      concatenates every day's run of that slot. Proven by diagnostic (route 90): "trip" lengths run
+      median 44 km / max 122 km with time spans of ~11,565 min (~8 DAYS); a real one-way run is ~15.5 km.
+      Route 24: median 64 km, max 175 km, same ~8-day spans. So the member "trips" fed to clustering are
+      each N single-runs stitched end to end - THAT is why patterns come out 1.7-7x too long and wander
+      (N slightly-different daily runs of the same slot, overlaid then medianed). Confirmed it is NOT the
+      later steps: DEBUG_LEN (env flag, now in reconstruct-routes.mjs) shows the centerline is ~1.0x its
+      MEMBER-trip length for nearly every pattern (max 1.45x on one tiny pattern) - the averaging is
+      faithful; the members are just huge. And map-matching couldn't help because its inputs were already
+      N-runs-in-one. Diagnostic script: /tmp/trip-diag.mjs (throwaway; lists per-trip km/span/dir/dest for
+      a given route - `node /tmp/trip-diag.mjs 90`).
+    - THE FIX (do this FIRST next session, before any clustering work): SEGMENT each (routeId, tripId)
+      into individual runs before step 2's trip-building - split the time-ordered points wherever there's
+      a large time gap between consecutive fixes (a run is ~40-60 min; the gap back to the next day's run
+      of the same slot is hours). A per-(routeId,tripId) key of (tripId + run-index) or (tripId + date)
+      then yields real ~15-25 km one-way runs. Re-run reconstruct -> match -> compare; this very likely
+      collapses most of the 14 flagged routes at a stroke and makes the length-trim / SIM_THRESHOLD
+      tinkering mostly moot. The hub-exclusion + length-trim already added are harmless to keep.
+    - VERDICT (provisional, ON HOLD pending the segmentation fix): GTFS/KML are clean single lines (KML
+      needs stitching from its 40-70 tiny segments) but miss real branches. GPS reconstruction finds the
+      branches and, once trips are correctly segmented, should give clean road-following geometry via the
+      existing match step - but the whole GPS chain is NOT trustworthy until the tripId-segmentation fix
+      lands and the compare is re-run. No base decision should be made before then. (Optional) commit a
       derived snapshot (reconstructed + matched patterns) so the distilled result is not hostage to this
       one machine's gitignored logs.
   - [DONE] STEP 2c: reliability sampler. `scripts/collect-reliability.mjs` rotates through the 270
