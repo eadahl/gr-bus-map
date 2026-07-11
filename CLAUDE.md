@@ -406,20 +406,70 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       faithful; the members are just huge. And map-matching couldn't help because its inputs were already
       N-runs-in-one. Diagnostic script: /tmp/trip-diag.mjs (throwaway; lists per-trip km/span/dir/dest for
       a given route - `node /tmp/trip-diag.mjs 90`).
-    - THE FIX (do this FIRST next session, before any clustering work): SEGMENT each (routeId, tripId)
-      into individual runs before step 2's trip-building - split the time-ordered points wherever there's
-      a large time gap between consecutive fixes (a run is ~40-60 min; the gap back to the next day's run
-      of the same slot is hours). A per-(routeId,tripId) key of (tripId + run-index) or (tripId + date)
-      then yields real ~15-25 km one-way runs. Re-run reconstruct -> match -> compare; this very likely
-      collapses most of the 14 flagged routes at a stroke and makes the length-trim / SIM_THRESHOLD
-      tinkering mostly moot. The hub-exclusion + length-trim already added are harmless to keep.
-    - VERDICT (provisional, ON HOLD pending the segmentation fix): GTFS/KML are clean single lines (KML
-      needs stitching from its 40-70 tiny segments) but miss real branches. GPS reconstruction finds the
-      branches and, once trips are correctly segmented, should give clean road-following geometry via the
-      existing match step - but the whole GPS chain is NOT trustworthy until the tripId-segmentation fix
-      lands and the compare is re-run. No base decision should be made before then. (Optional) commit a
-      derived snapshot (reconstructed + matched patterns) so the distilled result is not hostage to this
-      one machine's gitignored logs.
+    - [DONE 2026-07-10] THE FIX: SEGMENT each (routeId, tripId) into individual runs before step 2's
+      trip-building. reconstruct-routes.mjs now has a step 1b that splits a bucket's time-ordered points
+      wherever consecutive fixes are >RUN_GAP_MIN (60 min) apart. Threshold chosen from the data, not
+      guessed: the inter-fix gap histogram is sharply bimodal - 98% of gaps <1 min (in-run polling), a
+      thin tail to ~45 min (layovers/stalls), then a NEAR-EMPTY VALLEY (only 8 gaps total between 45 min
+      and 8 h, ZERO between 2 h and 8 h), then the day boundaries pile up at 8-24 h+. 60 min sits in the
+      valley, so one split run = one real trip. (Diagnostic that found the valley: throwaway, in scratchpad.)
+    - RESULT (verified, the fix WORKED): buckets 2524 -> 12234 runs (gap>60) -> 8732 usable -> 364 patterns
+      across all 25 routes (was 1772 trips -> 77 patterns pre-fix). The DOMINANT (highest-trip) pattern per
+      route+direction is now a realistic one-way length: on a per-direction-vs-GTFS-one-way metric, 0/25
+      routes exceed 1.6x (was 14/25 flagged). Route 90 IN/OU 14.9/14.3 km (was 44-58 km buckets), route 24
+      27.8/29.2 km EA/WE with the two branches cleanly SPLIT by destination (was 168-174 km blended), route
+      45 20.8/21.2 km (was 306-355 km). Map-match snap rate on the corrected runs jumped to 89.8% (was 70.3%
+      pre-fix) - cleaner single-run input follows real roads far better. So: the tripId-reuse root cause is
+      RESOLVED; the length-trim / SIM_THRESHOLD tinkering above is now moot (kept, harmless).
+    - CAVEAT - do NOT read compare-bases' gps(km) column as a regression: it SUMS every pattern's length,
+      and there are now 364 patterns (was 77), so the sum inflates (route 45 shows 39 patterns / 713 km).
+      That is pattern COUNT, not bad geometry. Of the 364, ~201 are SHORT PARTIAL runs (<0.7x their
+      direction's dominant length: a bus that went out of service mid-route, or a collection gap that split
+      a real run). The per-pattern lengths are correct; there are just many, most of them fragments.
+    - [DONE 2026-07-10] PATTERN CONSOLIDATION: `scripts/consolidate-patterns.mjs` distills the 364 patterns
+      to 50 (one clean line per route+direction, plus genuine branches). Method is DESTINATION-driven, not a
+      plain length filter (a length filter kept duplicate full patterns - route 90 IN had two near-identical
+      full runs). Per (routeId, dir), sort candidates by trips DESC, keep the most-observed as the DOMINANT,
+      then keep an extra only if it (a) reaches a destination no kept line covers yet, (b) is >= 0.5x the
+      dominant length (else it's a truncated fragment carrying the scheduled dest), (c) is <= 1.4x dominant
+      (else a same-slot double / out-and-back), and (d) actually adds >= 12% new road geometry (guards a
+      same-road run with a noisy dest label). Same-dest extras are dupes/partials -> dropped. Result: 364 ->
+      50 kept, 2 genuine branches survive (route 1 SO -> Meijer-54th at 16% new geom, route 5 SO -> Woodland-
+      only at 21% new). Tunables at top: MIN_LEN_FRAC 0.5, LEN_CAP 1.4, NEW_COV_MIN 0.12. VERBOSE=1 lists
+      every drop with its reason. Output data/routes-reconstructed-consolidated-debug.geojson (gitignored).
+      ONE BORDERLINE CALL left as-is: route 9 NB -> Target-GreenRidge (a real distinct dest) diverges only
+      ~11% from Walmart-Alpine (shares the whole Alpine corridor, splits ~1 km at the end), so it's DROPPED
+      at NEW_COV_MIN 0.12. To include it (and any other ~10-11% micro-branch), lower NEW_COV_MIN to 0.10.
+    - CONSOLIDATED SET MATCHED + COMPARED: ran match-routes.mjs GPS_MODE on the consolidated set (92.8% snap,
+      even cleaner than the full 89.8%) -> data/routes-reconstructed-consolidated-matched-debug.geojson.
+      compare-bases.mjs now PREFERS the consolidated files if present (gps + gps-matched), so the compare is
+      finally apples-to-apples: GPS totals sit at ~0.9-1.4x GTFS per route (route 45 42 km vs GTFS 44.2 km,
+      was 713 km pre-consolidation; route 90 29.2 km vs 31.2 km; route 24 57.6 km vs 52.2 km) and the extra
+      length over GTFS is exactly the branches GTFS misses (route 1 Meijer-54th, route 5 Woodland, route 24
+      Woodland+Rivertown, route 8 Rivertown, route 10 Pine Rest). Visual check (compare-preview.html, route
+      24): the matched GPS is ONE clean road-following line where the pre-fix version was a 174 km zigzag.
+    - PIPELINE for the GPS base (re-run in order after any collection extension):
+        node scripts/reconstruct-routes.mjs        # log -> 364 patterns (segmented runs)
+        node scripts/consolidate-patterns.mjs      # 364 -> 50 clean lines (data/...-consolidated-debug.geojson)
+        INPUT=data/routes-reconstructed-consolidated-debug.geojson \
+        OUT_MATCHED=data/routes-reconstructed-consolidated-matched-debug.geojson \
+        OUT_MERGED=data/routes-reconstructed-consolidated-matched-debug.geojson \
+        GPS_MODE=1 node scripts/match-routes.mjs   # snap the 50 onto OSM roads (92.8%)
+        node scripts/compare-bases.mjs             # 4-way compare (auto-prefers consolidated)
+      View: reconstruct-preview.html (toggle full 364 vs consolidated 50) and compare-preview.html (per-route
+      GTFS vs KML vs GPS vs GPS-matched).
+    - VERDICT (updated 2026-07-10): GPS reconstruction is now the STRONGEST base candidate. It gives realistic,
+      clean, road-following geometry (via the match step) AND is the only source that carries the real branches
+      (GTFS/KML both miss them; KML is also fragmented into 40-70 tiny segments). The GPS chain is now
+      trustworthy end to end (segmentation -> consolidation -> match all verified). Remaining before it could
+      REPLACE the deployed hand-geometry: the consolidated lines are per-DIRECTION (two lines per corridor,
+      not direction-merged like the deployed map), the hub is not clipped, and it hasn't been through the
+      polish pass - i.e. it's a clean BASE, not a finished map. Next natural step is Erik's call: either feed
+      the consolidated+matched GPS into the editor/polish pipeline as the new starting geometry (replacing the
+      GTFS-derived starting point Erik hand-edited from), or keep the current deployed map and use the GPS base
+      only to fill the specific coverage gaps (the anomaly-ring branches). (Optional, still worth doing) commit
+      a derived snapshot (consolidated + matched geojson) so the distilled result is not hostage to this one
+      machine's gitignored logs.
   - [DONE] STEP 2c: reliability sampler. `scripts/collect-reliability.mjs` rotates through the 270
     TIMEPOINT stops (IsTimePoint), one StopDepartures call every ~2.5s (~11 min/cycle), and logs each
     departure's schedule-vs-actual to data/reliability-log.ndjson (gitignored): sched (SDT), est (EDT),

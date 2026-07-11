@@ -88,13 +88,17 @@ function parseKmlCoords(text) {
   }
 }
 
-// ── GPS: our reconstructed patterns (>=3 trips each) ──────────────────────
+// ── GPS: our reconstructed patterns. Prefer the CONSOLIDATED set (one clean line
+// per route+dir+branch, ~50) if consolidate-patterns.mjs has been run; else fall
+// back to the full ~364-pattern reconstruction. ──────────────────────────────
+const gpsConsolidated = 'data/routes-reconstructed-consolidated-debug.geojson';
 {
-  const path = 'data/routes-reconstructed-debug.geojson';
+  const path = existsSync(gpsConsolidated) ? gpsConsolidated : 'data/routes-reconstructed-debug.geojson';
   if (!existsSync(path)) {
     console.error(`missing ${path} - run: node scripts/reconstruct-routes.mjs`);
     process.exit(1);
   }
+  if (path === gpsConsolidated) console.log('gps source: consolidated (one line per route+dir+branch)');
   const g = JSON.parse(readFileSync(path, 'utf8'));
   const byRoute = {};
   for (const f of g.features) {
@@ -111,7 +115,8 @@ function parseKmlCoords(text) {
 
 // ── GPS-MATCHED: the reconstructed patterns run through match-routes.mjs's OSM
 // snapping (GPS_MODE=1) - optional, only if that's been run ────────────────────
-const matchedPath = 'data/routes-reconstructed-matched-debug.geojson';
+const matchedConsolidated = 'data/routes-reconstructed-consolidated-matched-debug.geojson';
+const matchedPath = existsSync(matchedConsolidated) ? matchedConsolidated : 'data/routes-reconstructed-matched-debug.geojson';
 const hasMatched = existsSync(matchedPath);
 if (hasMatched) {
   const g = JSON.parse(readFileSync(matchedPath, 'utf8'));

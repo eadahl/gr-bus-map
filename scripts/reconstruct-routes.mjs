@@ -27,6 +27,14 @@ const ROUTES_FINAL = 'data/routes-final.geojson';
 const OUT = 'data/routes-reconstructed-debug.geojson';
 
 // ── tunables (the two decisions: min trips per pattern, directions kept separate)
+const RUN_GAP_MIN = 60;         // split a (routeId|tripId) bucket into separate RUNS wherever
+                                 // consecutive fixes are more than this many minutes apart. The
+                                 // Avail feed's TripId is a schedule-SLOT id that repeats every
+                                 // service day, so one bucket concatenates every day's run of that
+                                 // slot. The gap histogram is sharply bimodal: <1 min in-run, a thin
+                                 // tail to ~45 min (layovers/stalls), a near-empty valley from ~1 h
+                                 // to ~8 h, then the day boundaries at 8-24 h+. 60 min sits in that
+                                 // valley, so one split run = one real ~15-25 km trip. (See step 1b.)
 const MIN_TRIP_POINTS = 6;      // a run needs at least this many fixes to trace
 const MIN_TRIP_LEN_M = 800;     // and at least this much length (drop fragments)
 const TELEPORT_M = 1500;        // drop a fix that jumps more than this from the last (bad GPS)
@@ -109,21 +117,39 @@ if (existsSync(ROUTES_FINAL)) {
   for (const f of g.features) if (!f.properties.kind) colorById[String(f.properties.routeId)] = f.properties.color;
 }
 
-// ── 1. group into trips ───────────────────────────────────────────────────────
+// ── 1. group into (routeId|tripId) buckets ────────────────────────────────────
 if (!existsSync(LOG)) { console.error(`no log at ${LOG}. Run scripts/collect-vehicles.mjs first.`); process.exit(1); }
-const rawTrips = new Map(); // routeId|tripId -> observations
+const rawGroups = new Map(); // routeId|tripId -> observations (ALL service days, concatenated)
 for (const line of readFileSync(LOG, 'utf8').trim().split('\n')) {
   if (!line) continue;
   let o; try { o = JSON.parse(line); } catch { continue; }
   if (o.lat == null || o.lon == null || o.tripId == null) continue;
   const k = `${o.routeId}|${o.tripId}`;
-  if (!rawTrips.has(k)) rawTrips.set(k, []);
-  rawTrips.get(k).push(o);
+  if (!rawGroups.has(k)) rawGroups.set(k, []);
+  rawGroups.get(k).push(o);
 }
 
-// ── 2. clean each trip ────────────────────────────────────────────────────────
+// ── 1b. segment each bucket into individual RUNS by time gap ──────────────────
+// TripId repeats across service days (schedule-slot id), so a bucket is N days'
+// runs stitched end to end. Without this split, step 4 medians N different days'
+// runs point-by-index into one wandering, too-long line - the root cause of the
+// 14 over-length routes. Split wherever consecutive fixes are >RUN_GAP_MIN apart:
+// that gap lands in the empty valley between in-run polling (<45 min) and the day
+// boundary (8-24 h+), so each run is one real trip. Each run stays time-ordered.
+const runs = []; // arrays of observations, one continuous run each
+for (const obs of rawGroups.values()) {
+  obs.sort((a, b) => (a.fixTime || 0) - (b.fixTime || 0));
+  let run = [];
+  for (let i = 0; i < obs.length; i++) {
+    if (run.length && (obs[i].fixTime - obs[i - 1].fixTime) > RUN_GAP_MIN * 60000) { runs.push(run); run = []; }
+    run.push(obs[i]);
+  }
+  if (run.length) runs.push(run);
+}
+
+// ── 2. clean each run into a trip ─────────────────────────────────────────────
 const trips = []; // { routeId, dir, dest, coords, sig, len }
-for (const obs of rawTrips.values()) {
+for (const obs of runs) {
   obs.sort((a, b) => (a.fixTime || 0) - (b.fixTime || 0));
   const coords = [];
   for (const o of obs) {
@@ -213,7 +239,7 @@ writeFileSync(OUT, JSON.stringify({ type: 'FeatureCollection', features }));
 // ── report ────────────────────────────────────────────────────────────────────
 const byRoute = new Map();
 for (const f of features) { const r = f.properties.routeId; byRoute.set(r, (byRoute.get(r) || 0) + 1); }
-console.log(`trips: ${rawTrips.size} raw -> ${trips.length} usable (>=${MIN_TRIP_POINTS} pts, >=${MIN_TRIP_LEN_M} m)`);
+console.log(`buckets: ${rawGroups.size} (routeId|tripId) -> ${runs.length} runs (split at gap>${RUN_GAP_MIN}min) -> ${trips.length} usable (>=${MIN_TRIP_POINTS} pts, >=${MIN_TRIP_LEN_M} m)`);
 console.log(`patterns kept (>=${MIN_PATTERN_TRIPS} trips): ${features.length} across ${byRoute.size} routes\n`);
 console.log('route  patterns  (trips x dir -> dest)');
 const routesSorted = [...byRoute.keys()].sort((a, b) => (+a || 9999) - (+b || 9999));

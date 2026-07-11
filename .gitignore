@@ -36,6 +36,13 @@ data/routes-reconstructed-matched-debug.geojson
 # Note: data/routes-final.geojson (the polish-pass output) is COMMITTED on purpose:
 # it is the static geometry the deployed index.html draws (no build step on Netlify).
 
+# Note: the CONSOLIDATED reconstructed set (one clean line per route+dir+branch) and
+# its map-matched version are COMMITTED on purpose as a distilled GPS-base snapshot, so
+# the result is not hostage to this machine's gitignored vehicle-log. The large 364-
+# pattern intermediates they derive from stay ignored (regenerable from the log):
+#   data/routes-reconstructed-consolidated-debug.geojson          (committed)
+#   data/routes-reconstructed-consolidated-matched-debug.geojson  (committed)
+
 # Accumulated live-vehicle GPS log from scripts/collect-vehicles.mjs. Large and
 # always growing; we commit only the DERIVED route geometry, not the raw log
 # (same "parse once, commit static" rule as the GTFS source).
