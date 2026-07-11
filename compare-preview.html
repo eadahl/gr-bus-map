@@ -37,6 +37,7 @@
     <div class="row"><span class="sw" style="border-color:#111; border-top-style:dashed"></span> GTFS shape <button id="t-gtfs">on</button></div>
     <div class="row"><span class="sw" style="border-color:#0af; border-top-style:dotted"></span> official KML <button id="t-kml">on</button></div>
     <div class="row"><span class="sw" style="border-color:#111"></span> GPS reconstructed <button id="t-gps">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#0a4; border-width:5px"></span> GPS map-matched <button id="t-gpsm">on</button></div>
 
     <div class="stats" id="stats">loading...</div>
   </div>
@@ -71,6 +72,13 @@
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': ['get', 'color'], 'line-width': 2.5 },
       });
+      // Map-matched GPS: solid dark green so it's easy to pick out regardless of
+      // route color, drawn on top since it's the "does this actually fix it" answer.
+      map.addLayer({
+        id: 'gpsm-line', type: 'line', source: 'compare', filter: ['==', ['get', 'source'], 'gps-matched'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#0a4', 'line-width': 3 },
+      });
       applyRoute();
     }
     function build(style) {
@@ -95,6 +103,7 @@
     toggle('gtfs', ['gtfs-line'], 't-gtfs');
     toggle('kml', ['kml-line'], 't-kml');
     toggle('gps', ['gps-casing', 'gps-line'], 't-gps');
+    toggle('gpsm', ['gpsm-line'], 't-gpsm');
 
     function applyRoute() {
       const r = document.getElementById('routeSel').value;
@@ -103,6 +112,7 @@
       map.setFilter('kml-line', f ? ['all', ['==', ['get', 'source'], 'kml'], f] : ['==', ['get', 'source'], 'kml']);
       map.setFilter('gps-line', f ? ['all', ['==', ['get', 'source'], 'gps'], f] : ['==', ['get', 'source'], 'gps']);
       map.setFilter('gps-casing', f ? ['all', ['==', ['get', 'source'], 'gps'], f] : ['==', ['get', 'source'], 'gps']);
+      map.setFilter('gpsm-line', f ? ['all', ['==', ['get', 'source'], 'gps-matched'], f] : ['==', ['get', 'source'], 'gps-matched']);
       renderStats(r);
     }
     function renderStats(r) {
@@ -111,13 +121,18 @@
       const s = statsData[r];
       if (!s) { el.innerHTML = ''; return; }
       const warn = (s.gps && s.gtfs && s.gps.km > s.gtfs.km * 1.6)
-        ? `<div class="warn">GPS total is ${(s.gps.km / s.gtfs.km).toFixed(1)}x GTFS length - likely a clustering artifact (a merged/mis-clustered pattern), inspect visually before trusting.</div>` : '';
+        ? `<div class="warn">raw GPS total is ${(s.gps.km / s.gtfs.km).toFixed(1)}x GTFS length - likely a clustering artifact, inspect visually before trusting.</div>` : '';
+      const mWarn = (s.gpsMatched && s.gtfs && s.gpsMatched.km > s.gtfs.km * 1.6)
+        ? `<div class="warn">map-matched GPS is STILL ${(s.gpsMatched.km / s.gtfs.km).toFixed(1)}x GTFS length - matching didn't fix this route, needs a look.</div>` : '';
+      const mOk = (s.gpsMatched && s.gtfs && s.gpsMatched.km <= s.gtfs.km * 1.6 && s.gps && s.gps.km > s.gtfs.km * 1.6)
+        ? `<div style="color:#0a4">map-matched GPS resolved to ${(s.gpsMatched.km / s.gtfs.km).toFixed(1)}x GTFS - matching fixed this route.</div>` : '';
       el.innerHTML = `
         <div><span class="lab">GTFS</span><span>${s.gtfs ? s.gtfs.pieces + ' shapes, ' + s.gtfs.km + ' km' : '-'}</span></div>
         <div><span class="lab">KML</span><span>${s.kml ? s.kml.pieces + ' segs, ' + s.kml.km + ' km' + (s.kml.detoured ? ' (DET)' : '') : '-'}</span></div>
         <div><span class="lab">GPS</span><span>${s.gps ? s.gps.patterns + ' patterns, ' + s.gps.km + ' km' : '-'}</span></div>
+        <div><span class="lab">GPS matched</span><span>${s.gpsMatched ? s.gpsMatched.km + ' km' : '-'}</span></div>
         <div style="margin-top:4px" class="lab">GPS branches: ${s.gps ? s.gps.dests.join(', ') : '-'}</div>
-        ${warn}`;
+        ${warn}${mWarn}${mOk}`;
     }
 
     fetch('./data/base-compare-stats.json').then(r => r.json()).then(d => {

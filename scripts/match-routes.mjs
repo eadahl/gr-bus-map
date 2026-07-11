@@ -18,9 +18,24 @@
 // match-preview.html. Does NOT touch the deployed map yet (that is step 2).
 //
 // Usage: node scripts/match-routes.mjs   (needs osm-src/roads.json)
+//
+// Also reusable on the GPS-reconstructed patterns (initiative step 2b): each
+// input feature just needs routeId + color + coordinates; INPUT/OUT_MATCHED
+// point it at data/routes-reconstructed-debug.geojson, and GPS_MODE=1 carries
+// dir/trips/dests through and skips the direction-merge step (each reconstructed
+// pattern is already a distinct branch we do NOT want blended - merging is a
+// GTFS-only step, built around exactly-one-shape-per-direction).
+//   INPUT=data/routes-reconstructed-debug.geojson \
+//   OUT_MATCHED=data/routes-reconstructed-matched-debug.geojson \
+//   GPS_MODE=1 node scripts/match-routes.mjs
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { toM, toLngLat, dist, bearing, bearingDelta, resample } from './lib-corridors.mjs';
+
+const INPUT = process.env.INPUT || 'data/routes.geojson';
+const OUT_MATCHED = process.env.OUT_MATCHED || 'data/routes-matched-debug.geojson';
+const OUT_MERGED = process.env.OUT_MERGED || 'data/routes-merged-debug.geojson';
+const GPS_MODE = process.env.GPS_MODE === '1';
 
 const SNAP_TOL = 25;     // m: farthest a route point can be from a road and still match it
 const BEARING_TOL = 35;  // deg (mod 180): road must run roughly the route's direction
@@ -403,7 +418,7 @@ function waySub(w, fA, fB) {
 
 // --- Match each route --------------------------------------------------------
 
-const routes = JSON.parse(readFileSync('data/routes.geojson', 'utf8'));
+const routes = JSON.parse(readFileSync(INPUT, 'utf8'));
 const out = [];
 const byRoute = new Map(); // routeId -> { color, dirs: [meterCoords, ...] }
 let totalPts = 0;
@@ -452,40 +467,52 @@ for (const f of routes.features) {
 
   out.push({
     type: 'Feature',
-    properties: { routeId: f.properties.routeId, color: f.properties.color },
+    properties: GPS_MODE
+      ? { routeId: f.properties.routeId, color: f.properties.color, dir: f.properties.dir, trips: f.properties.trips, dests: f.properties.dests }
+      : { routeId: f.properties.routeId, color: f.properties.color },
     geometry: { type: 'LineString', coordinates: cleaned.map(toLngLat) },
   });
 
-  // Keep the meter-space geometry per route so the two directions can be merged.
+  // Keep the meter-space geometry per route so the two directions can be merged
+  // (GTFS mode only - see below).
   const key = f.properties.routeId;
   if (!byRoute.has(key)) byRoute.set(key, { color: f.properties.color, dirs: [] });
   byRoute.get(key).dirs.push(cleaned);
 }
 
-writeFileSync('data/routes-matched-debug.geojson', JSON.stringify({ type: 'FeatureCollection', features: out }));
+writeFileSync(OUT_MATCHED, JSON.stringify({ type: 'FeatureCollection', features: out }));
 
 // Collapse each route's two directions into one line (median where they coincide,
-// both legs where they split). One feature per route, MultiLineString of parts.
-const merged = [];
-for (const [routeId, { color, dirs }] of byRoute) {
-  const parts = (dirs.length === 2 ? mergeDirections(dirs[0], dirs[1]) : dirs)
-    .map((p) => cleanup(deRoundabout(p)))
-    .filter((p) => p.length >= 2)
-    .map((p) => p.map(toLngLat));
-  if (!parts.length) continue;
-  merged.push({
-    type: 'Feature',
-    properties: { routeId, color },
-    geometry: parts.length === 1
-      ? { type: 'LineString', coordinates: parts[0] }
-      : { type: 'MultiLineString', coordinates: parts },
-  });
+// both legs where they split). GTFS-only: it assumes exactly one shape per
+// direction, which is exactly what a reconstructed pattern is NOT - each is
+// already a distinct branch, so blending would erase the thing this initiative
+// exists to capture. In GPS_MODE, OUT_MERGED is just a copy of the matched (but
+// per-pattern, unmerged) output, so downstream tooling has one predictable name.
+let merged;
+if (GPS_MODE) {
+  merged = out;
+} else {
+  merged = [];
+  for (const [routeId, { color, dirs }] of byRoute) {
+    const parts = (dirs.length === 2 ? mergeDirections(dirs[0], dirs[1]) : dirs)
+      .map((p) => cleanup(deRoundabout(p)))
+      .filter((p) => p.length >= 2)
+      .map((p) => p.map(toLngLat));
+    if (!parts.length) continue;
+    merged.push({
+      type: 'Feature',
+      properties: { routeId, color },
+      geometry: parts.length === 1
+        ? { type: 'LineString', coordinates: parts[0] }
+        : { type: 'MultiLineString', coordinates: parts },
+    });
+  }
 }
 
-writeFileSync('data/routes-merged-debug.geojson', JSON.stringify({ type: 'FeatureCollection', features: merged }));
+writeFileSync(OUT_MERGED, JSON.stringify({ type: 'FeatureCollection', features: merged }));
 
 console.log(`roads: ${rawWayCount} OSM ways merged into ${ways.length} corridors`);
 console.log(`route points: ${totalPts}, snapped to a road: ${matchedPts} (${((100 * matchedPts) / totalPts).toFixed(1)}%)`);
 console.log(`junction cleanup: ${vertsBefore} -> ${vertsAfter} vertices (${vertsBefore - vertsAfter} spikes/dupes removed)`);
 console.log(`direction merge: ${out.length} direction-lines -> ${merged.length} per-route lines`);
-console.log('wrote data/routes-matched-debug.geojson and data/routes-merged-debug.geojson');
+console.log(`wrote ${OUT_MATCHED}${OUT_MATCHED !== OUT_MERGED ? ' and ' + OUT_MERGED : ''}`);

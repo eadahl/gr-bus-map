@@ -368,14 +368,39 @@ Reference register: https://nycsubway.figma.site/ (near-white, colored lines car
       similar total length). Needs either a stricter/local-divergence-aware clustering method or
       map-matching to pull each divergent branch onto its own road (the planned 2b) - deferred, not
       solved here.
+    - [DONE] STEP 2b: map-matched the reconstructed patterns, RESULT: matching alone does NOT fix the
+      flagged routes - the hoped-for "may help the divergence issue by snapping to distinct real roads"
+      was tested and did not hold. `match-routes.mjs` is now reusable on GPS input: `INPUT`/`OUT_MATCHED`/
+      `OUT_MERGED` env vars override the hardcoded paths, and `GPS_MODE=1` carries dir/trips/dests
+      through and SKIPS the direction-merge step (GTFS-only - assumes exactly one shape per direction,
+      which a reconstructed branch is not; merging would blend genuinely different branches). Run:
+        INPUT=data/routes-reconstructed-debug.geojson \
+        OUT_MATCHED=data/routes-reconstructed-matched-debug.geojson \
+        OUT_MERGED=data/routes-reconstructed-matched-debug.geojson \
+        GPS_MODE=1 node scripts/match-routes.mjs
+      70.3% of GPS points snapped to a road (vs 94.9% for clean GTFS input - expected, reconstructed
+      patterns include the noisier/divergent stretches). `compare-bases.mjs` picks up the matched file
+      automatically if present (4th `gps-matched` source, dark green in compare-preview.html) and warns
+      per-route whether matching resolved or didn't resolve the length flag.
+      RESULT CONFIRMED BOTH QUANTITATIVELY AND VISUALLY: route 24 barely moved (173.8 -> 158.8 km, still
+      3.0x GTFS's 52.2 km); route 45 got WORSE (306.3 -> 355.2 km). Visual check on route 90's hub-area
+      tangle: the matched (green) line now precisely follows real streets - the wobble is genuinely gone,
+      that part of matching's job is done - but it STILL zigzags across multiple parallel streets in the
+      same chaotic pattern as the raw version. CONCLUSION: matching cleans wobble on points already
+      correctly assigned; it runs AFTER clustering, so it cannot undo a bad cluster. The corruption is
+      strictly upstream, at reconstruct-routes.mjs's Jaccard clustering step (documented above) - fixing
+      it needs a clustering-level fix (stricter SIM_THRESHOLD, or a local-divergence-aware method e.g.
+      DTW), not a matching-level one. This closes off matching as a candidate fix; do not re-attempt it
+      for this purpose.
     - VERDICT (provisional, not final): no single source wins outright. GTFS/KML are clean single lines
-      (KML needs stitching) but miss branches. GPS finds the branches but needs the unresolved
-      local-divergence issue fixed (map-matching, most likely) before its patterns are trustworthy
-      geometry. Next: (2b) map-match the reconstructed patterns onto OSM roads (also removes the raw-GPS
-      wobble, may help the divergence issue by snapping to distinct real roads) - THEN revisit this
-      compare with map-matched patterns. Optionally stitch KML into continuous lines for a fairer look
-      at that candidate too. (Optional) commit a derived snapshot (reconstructed patterns) so the
-      distilled result is not hostage to this one machine's gitignored logs.
+      (KML needs stitching) but miss branches. GPS + matching gives clean, road-following geometry with
+      real branch coverage on the ~11 of 25 routes that clustered cleanly, but the other 14 still need
+      the clustering-level fix above before they're trustworthy. Realistic next move: tighten
+      SIM_THRESHOLD (currently 0.5) and accept more/thinner patterns as the cost, then re-run this whole
+      chain (reconstruct -> match -> compare) and see how much of the flagged set clears. Optionally
+      stitch KML into continuous lines for a fairer look at that candidate too. (Optional) commit a
+      derived snapshot (reconstructed + matched patterns) so the distilled result is not hostage to this
+      one machine's gitignored logs.
   - [DONE] STEP 2c: reliability sampler. `scripts/collect-reliability.mjs` rotates through the 270
     TIMEPOINT stops (IsTimePoint), one StopDepartures call every ~2.5s (~11 min/cycle), and logs each
     departure's schedule-vs-actual to data/reliability-log.ndjson (gitignored): sched (SDT), est (EDT),

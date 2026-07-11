@@ -31,6 +31,7 @@ data/routes-matched-debug.geojson
 data/routes-matched-spread-debug.geojson
 data/routes-merged-debug.geojson
 data/routes-merged-spread-debug.geojson
+data/routes-reconstructed-matched-debug.geojson
 
 # Note: data/routes-final.geojson (the polish-pass output) is COMMITTED on purpose:
 # it is the static geometry the deployed index.html draws (no build step on Netlify).

@@ -7,12 +7,19 @@
 // geometry should be.
 //
 // Sources:
-//   gtfs -> data/routes.geojson          (build-routes.mjs; one shape/route+dir)
-//   kml  -> data/detour-traces/*.kml     (collect-detours.mjs archive; the
-//           agency's own drawn line, CURRENT file per route: prefers the
-//           newest _DET_-timestamped trace, falls back to the plain file)
-//   gps  -> data/routes-reconstructed-debug.geojson (reconstruct-routes.mjs;
-//           re-run this on the full log first for a fair comparison)
+//   gtfs        -> data/routes.geojson          (build-routes.mjs; one shape/route+dir)
+//   kml         -> data/detour-traces/*.kml     (collect-detours.mjs archive; the
+//                  agency's own drawn line, CURRENT file per route: prefers the
+//                  newest _DET_-timestamped trace, falls back to the plain file)
+//   gps         -> data/routes-reconstructed-debug.geojson (reconstruct-routes.mjs;
+//                  re-run this on the full log first for a fair comparison)
+//   gps-matched -> data/routes-reconstructed-matched-debug.geojson (optional; the
+//                  above run through match-routes.mjs in GPS_MODE, snapped onto OSM
+//                  roads. Skipped if the file doesn't exist - run:
+//                    INPUT=data/routes-reconstructed-debug.geojson \
+//                    OUT_MATCHED=data/routes-reconstructed-matched-debug.geojson \
+//                    OUT_MERGED=data/routes-reconstructed-matched-debug.geojson \
+//                    GPS_MODE=1 node scripts/match-routes.mjs)
 //
 // Usage: node scripts/compare-bases.mjs
 // Out:   data/base-compare.geojson (gitignored)  -> compare-preview.html
@@ -102,18 +109,39 @@ function parseKmlCoords(text) {
   }
 }
 
+// ── GPS-MATCHED: the reconstructed patterns run through match-routes.mjs's OSM
+// snapping (GPS_MODE=1) - optional, only if that's been run ────────────────────
+const matchedPath = 'data/routes-reconstructed-matched-debug.geojson';
+const hasMatched = existsSync(matchedPath);
+if (hasMatched) {
+  const g = JSON.parse(readFileSync(matchedPath, 'utf8'));
+  const byRoute = {};
+  for (const f of g.features) {
+    const id = String(f.properties.routeId);
+    if (!routeIds.includes(id)) continue;
+    features.push({ type: 'Feature', properties: { source: 'gps-matched', routeId: id, color: colorById[id], dir: f.properties.dir, trips: f.properties.trips, dests: f.properties.dests }, geometry: f.geometry });
+    (byRoute[id] = byRoute[id] || []).push(f);
+  }
+  for (const id of routeIds) {
+    const pats = byRoute[id] || [];
+    stats[id].gpsMatched = { patterns: pats.length, km: +(pats.reduce((s, f) => s + lineLenM(f.geometry.coordinates), 0) / 1000).toFixed(1) };
+  }
+}
+
 writeFileSync(OUT, JSON.stringify({ type: 'FeatureCollection', features }));
 
 // ── report ───────────────────────────────────────────────────────────────
-console.log(`wrote ${features.length} features (gtfs+kml+gps) to ${OUT}\n`);
-console.log('route  gtfs(pieces/km)  kml(pieces/km, detour?)   gps(patterns/km)   gps branches (dests)');
+console.log(`wrote ${features.length} features (gtfs+kml+gps${hasMatched ? '+gps-matched' : ''}) to ${OUT}\n`);
+if (!hasMatched) console.log(`(no ${matchedPath} - run match-routes.mjs in GPS_MODE to add the matched column)\n`);
+console.log('route  gtfs(pieces/km)  kml(pieces/km, detour?)   gps(patterns/km)   gps-matched(km)  gps branches (dests)');
 for (const id of routeIds.sort((a, b) => (+a || 1e9) - (+b || 1e9))) {
   const s = stats[id];
   const g = s.gtfs ? `${s.gtfs.pieces}/${s.gtfs.km}km` : '-';
   const k = s.kml ? `${s.kml.pieces}/${s.kml.km}km${s.kml.detoured ? ' DET' : ''}` : '-';
   const p = s.gps ? `${s.gps.patterns}/${s.gps.km}km` : '-';
+  const m = s.gpsMatched ? `${s.gpsMatched.km}km` : (hasMatched ? '0km' : '-');
   const dests = s.gps ? s.gps.dests.slice(0, 3).join(', ') : '';
-  console.log(`${id.padEnd(5)}  ${g.padEnd(17)}${k.padEnd(26)}${p.padEnd(19)}${dests}`);
+  console.log(`${id.padEnd(5)}  ${g.padEnd(17)}${k.padEnd(26)}${p.padEnd(19)}${m.padEnd(17)}${dests}`);
 }
 
 writeFileSync('data/base-compare-stats.json', JSON.stringify(stats));
