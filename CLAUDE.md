@@ -626,6 +626,19 @@ hours) before those tabs are usable again on the full log.
 
 - **FULL API INVENTORY: [docs/rapid-api.md](docs/rapid-api.md)** (probed 2026-06-20).
   Read it before building anything that touches agency data. Summary below.
+- **DATA TRUST ASSESSMENT: [docs/data-trust.md](docs/data-trust.md)** (measured 2026-07-14).
+  Read it before designing any PUBLIC RIDER-FACING claim. The three-tier claim framework
+  (API face-value / live client-side cross-checks / memory-unlocked; doubles as the build
+  order), per-stream trust map, the phantom-stop case study (stop 6301: API lists
+  departures at a stop the detour has skipped ~99% of the time for months), the five
+  gap-closers (derived actuals from GPS: validated, 50k passages; variance baselines;
+  horizon-calibrated ETA; ghost/skipped-stop detection; detour-activation polling),
+  rider-facing example claims by category (actuals / normality / reliability / advice,
+  each grounded in measured numbers), and the claim vocabulary the UI may use.
+  IMPORTANT: it CORRECTS two earlier findings in this file: system lateness is median
+  1.1 min (the 3.3 min / "~80-94% late" reliability-log numbers were selection-biased),
+  and API predictions are only optimistic at long horizon (final pre-departure
+  predictions are 87% within 3 min).
 - Provider is Avail InfoPoint at `connect.ridetherapid.org`. **CORS is open
   (`Access-Control-Allow-Origin: *`) on EVERY endpoint, including the KML traces**,
   so the browser can call all of it directly. **No serverless proxy. No Netlify

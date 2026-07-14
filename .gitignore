@@ -54,6 +54,12 @@ data/routes-reconstructed-debug.geojson
 
 # Three-way base head-to-head output from scripts/compare-bases.mjs (regenerable).
 data/base-compare.geojson
+
+# Live-vs-canonical divergence output from scripts/compare-live-vs-canonical.mjs.
+# Derived from the gitignored detour-log + detour-traces, so regenerated locally,
+# not committed (same rule as the other analysis outputs above).
+data/live-vs-canonical.geojson
+data/live-vs-canonical-stats.json
 data/base-compare-stats.json
 
 # Detour timeline log + archived route trace KMLs from collect-detours.mjs.

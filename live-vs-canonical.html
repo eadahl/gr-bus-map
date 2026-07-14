@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Live vs canonical routes (with detours)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; background: #fafafa; }
+    .panel {
+      position: absolute; top: 12px; left: 12px; z-index: 1;
+      font: 12px/1.5 ui-monospace, 'IBM Plex Mono', Menlo, monospace;
+      color: #111; background: #fff; border: 1px solid #111; border-radius: 2px;
+      padding: 10px 12px; width: 320px; max-height: calc(100vh - 40px); overflow-y: auto;
+    }
+    .panel b { font-weight: 600; }
+    select { font: inherit; width: 100%; margin: 4px 0 8px; padding: 3px; }
+    .row { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+    .sw { width: 22px; height: 0; border-top-width: 3px; flex-shrink: 0; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    button { font: inherit; cursor: pointer; padding: 2px 6px; border: 1px solid #111;
+      background: #fff; border-radius: 2px; margin-left: auto; }
+    button.off { opacity: 0.4; }
+    .stats { margin-top: 10px; border-top: 1px solid #ddd; padding-top: 8px; }
+    .stats .kv { display: flex; justify-content: space-between; }
+    .stats .lab { color: #777; }
+    .tag { display:inline-block; padding:0 5px; border-radius:2px; color:#fff; font-size:11px; }
+    .reason { color:#444; margin-top:6px; font-size:11px; white-space:pre-wrap; }
+    .muted { color:#999; }
+    h4 { margin: 8px 0 2px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <b>Live vs canonical (with detours)</b>
+    <select id="routeSel"></select>
+
+    <div class="row"><span class="sw" style="border-color:#111; border-top-style:dashed"></span> GTFS (canonical) <button id="t-gtfs">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#0af; border-top-style:dotted"></span> KML (canonical) <button id="t-kml">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#111; border-top-width:5px"></span> live GPS <button id="t-live">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#e8871e; border-top-style:dashed"></span> detour geom (during collection) <button id="t-dh">on</button></div>
+    <div class="row"><span class="sw" style="border-color:#c026d3"></span> detours LIVE now <button id="t-cur" class="off">off</button></div>
+    <h4>divergence (live off GTFS)</h4>
+    <div class="row"><span class="dot" style="background:#e8871e"></span> matches published detour <button id="t-dv-detour">on</button></div>
+    <div class="row"><span class="dot" style="background:#0a4"></span> branch past canonical end <button id="t-dv-branch">on</button></div>
+    <div class="row"><span class="dot" style="background:#e8413a"></span> unexplained deviation <button id="t-dv-dev">on</button></div>
+
+    <div class="stats" id="stats">loading...</div>
+  </div>
+
+  <script>
+    const POSITRON = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+    const FALLBACK = { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#fafafa' } }] };
+    const GR = [-85.6681, 42.9634];
+    const API = 'https://connect.ridetherapid.org/InfoPoint';
+    let map, stats = {}, logWindow = null, curDetour = {}; // curDetour[routeId] = {file, msgs:[]}
+
+    function addLayers() {
+      if (!map || map.getSource('cmp')) return;
+      try {
+        map.addSource('cmp', { type: 'geojson', data: './data/live-vs-canonical.geojson' });
+        map.addSource('cur', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      } catch (e) { return; }
+      const bySource = (s) => ['==', ['get', 'source'], s];
+
+      map.addLayer({ id: 'gtfs', type: 'line', source: 'cmp', filter: bySource('gtfs'),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#111', 'line-width': 1.8, 'line-dasharray': [3, 2], 'line-opacity': 0.65 } });
+      map.addLayer({ id: 'kml', type: 'line', source: 'cmp', filter: bySource('kml'),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#0088ff', 'line-width': 2.2, 'line-dasharray': [1, 2], 'line-opacity': 0.75 } });
+      map.addLayer({ id: 'dh', type: 'line', source: 'cmp', filter: bySource('detour-hist'),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#e8871e', 'line-width': 2, 'line-dasharray': [2, 2], 'line-opacity': 0.7 } });
+      map.addLayer({ id: 'live-casing', type: 'line', source: 'cmp', filter: bySource('live'),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#fff', 'line-width': 5, 'line-opacity': 0.9 } });
+      map.addLayer({ id: 'live', type: 'line', source: 'cmp', filter: bySource('live'),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 2.4 } });
+      // divergence: thick, colored by cause, on top
+      const dvColor = ['match', ['get', 'class'], 'detour', '#e8871e', 'branch', '#0a4', 'deviation', '#e8413a', '#e8413a'];
+      map.addLayer({ id: 'dv', type: 'line', source: 'cmp', filter: bySource('divergence'),
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': dvColor, 'line-width': 6, 'line-opacity': 0.55 } });
+      // current-live detours (fetched), off by default
+      map.addLayer({ id: 'cur', type: 'line', source: 'cur',
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+        paint: { 'line-color': '#c026d3', 'line-width': 3, 'line-opacity': 0.85 } });
+      applyRoute();
+    }
+    function build(style) {
+      map = new maplibregl.Map({ container: 'map', style, center: GR, zoom: 11 });
+      map.on('styledata', addLayers);
+      map.on('load', addLayers);
+    }
+    build(POSITRON);
+    let fellBack = false;
+    const wd = setTimeout(() => { if (!fellBack && !map.isStyleLoaded()) { fellBack = true; map.remove(); build(FALLBACK); } }, 5000);
+    const iv = setInterval(() => { addLayers(); if (map.getSource('cmp')) { clearInterval(iv); clearTimeout(wd); } }, 300);
+
+    function toggle(btn, layers, startOn = true) {
+      let on = startOn;
+      document.getElementById(btn).addEventListener('click', (e) => {
+        on = !on;
+        for (const l of layers) if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', on ? 'visible' : 'none');
+        e.target.textContent = on ? 'on' : 'off';
+        e.target.classList.toggle('off', !on);
+      });
+    }
+    toggle('t-gtfs', ['gtfs']); toggle('t-kml', ['kml']); toggle('t-live', ['live', 'live-casing']);
+    toggle('t-dh', ['dh']);
+
+    // divergence class sub-filter: one dv layer, shown/hidden per class via applyRoute
+    const dvOn = { detour: true, branch: true, deviation: true };
+
+    let curLoaded = false;
+    document.getElementById('t-cur').addEventListener('click', async (e) => {
+      const showing = e.target.textContent === 'on';
+      const next = showing ? 'none' : 'visible';
+      if (map.getLayer('cur')) map.setLayoutProperty('cur', 'visibility', next);
+      e.target.textContent = showing ? 'off' : 'on';
+      e.target.classList.toggle('off', showing);
+      if (!showing && !curLoaded) { curLoaded = true; e.target.textContent = '...'; await loadCurrent(); e.target.textContent = 'on'; }
+    });
+
+    function applyRoute() {
+      const r = document.getElementById('routeSel').value;
+      const rf = r === 'all' ? null : ['==', ['get', 'routeId'], r];
+      const set = (id, src) => map.getLayer(id) && map.setFilter(id, rf ? ['all', ['==', ['get', 'source'], src], rf] : ['==', ['get', 'source'], src]);
+      set('gtfs', 'gtfs'); set('kml', 'kml'); set('dh', 'detour-hist');
+      set('live', 'live'); set('live-casing', 'live');
+      // divergence with class sub-filter
+      const keepCls = Object.entries(dvOn).filter(([, v]) => v).map(([k]) => k);
+      const clsF = ['in', ['get', 'class'], ['literal', keepCls]];
+      map.getLayer('dv') && map.setFilter('dv', rf ? ['all', ['==', ['get', 'source'], 'divergence'], rf, clsF] : ['all', ['==', ['get', 'source'], 'divergence'], clsF]);
+      map.getLayer('cur') && map.setFilter('cur', rf ? rf : ['literal', true]);
+      renderStats(r);
+    }
+    // wire the class toggles now that applyRoute exists
+    document.getElementById('t-dv-detour').onclick = () => { dvOn.detour = !dvOn.detour; flip('t-dv-detour', dvOn.detour); applyRoute(); };
+    document.getElementById('t-dv-branch').onclick = () => { dvOn.branch = !dvOn.branch; flip('t-dv-branch', dvOn.branch); applyRoute(); };
+    document.getElementById('t-dv-dev').onclick = () => { dvOn.deviation = !dvOn.deviation; flip('t-dv-dev', dvOn.deviation); applyRoute(); };
+    function flip(btn, on) { const e = document.getElementById(btn); e.textContent = on ? 'on' : 'off'; e.classList.toggle('off', !on); }
+
+    function esc(s) { return (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+    function renderStats(r) {
+      const el = document.getElementById('stats');
+      if (r === 'all') {
+        const rows = Object.entries(stats).filter(([, s]) => s.pctOffGtfs > 0)
+          .sort((a, b) => b[1].pctOffGtfs - a[1].pctOffGtfs)
+          .map(([id, s]) => `<div class="kv"><span>route ${id}${s.detouredHist ? ' <span class="tag" style="background:#e8871e">DET</span>' : ''}</span><span>${s.pctOffGtfs}% off, ${s.divergentKm}km</span></div>`).join('');
+        el.innerHTML = `<div class="lab">recording window</div><div>${logWindow ? esc(logWindow.from) + ' to ' + esc(logWindow.to) : '-'}</div>
+          <h4>most divergent routes</h4>${rows || '<div class="muted">none diverge</div>'}
+          <div class="reason muted">Pick a route for where/how/when detail. "detours LIVE now" fetches the current published detours.</div>`;
+        return;
+      }
+      const s = stats[r];
+      if (!s) { el.innerHTML = ''; return; }
+      const c = s.classKm;
+      const cur = curDetour[r];
+      const curLine = curLoaded
+        ? (cur ? `<div class="kv"><span class="lab">detoured NOW</span><span><span class="tag" style="background:#c026d3">YES</span></span></div>` : `<div class="kv"><span class="lab">detoured NOW</span><span class="muted">no</span></div>`)
+        : `<div class="kv"><span class="lab">detoured NOW</span><span class="muted">toggle "detours LIVE now"</span></div>`;
+      el.innerHTML = `
+        <div class="kv"><span class="lab">live length</span><span>${s.liveKm} km</span></div>
+        <div class="kv"><span class="lab">off GTFS</span><span>${s.pctOffGtfs}% (${s.divergentKm} km)</span></div>
+        <div class="kv"><span class="lab">off KML</span><span>${s.pctOffKml == null ? 'n/a (no plain KML)' : s.pctOffKml + '%'}</span></div>
+        <h4>divergence by cause (km)</h4>
+        <div class="kv"><span style="color:#e8871e">matches detour</span><span>${c.detour}</span></div>
+        <div class="kv"><span style="color:#0a4">branch past end</span><span>${c.branch}</span></div>
+        <div class="kv"><span style="color:#e8413a">unexplained</span><span>${c.deviation}</span></div>
+        <h4>detour during collection</h4>
+        <div class="kv"><span class="lab">detoured?</span><span>${s.detouredHist ? '<span class="tag" style="background:#e8871e">YES</span> ' + s.detourWindow.share + '% of window' : '<span class="muted">no</span>'}</span></div>
+        ${s.detourWindow ? `<div class="kv"><span class="lab">when</span><span>${esc(s.detourWindow.from)} to ${esc(s.detourWindow.to)}</span></div>` : ''}
+        ${curLine}
+        ${s.detourReasons.length ? `<div class="reason"><b>published:</b> ${esc(s.detourReasons[0])}</div>` : ''}`;
+    }
+
+    // ── current-live detours: GetAllRoutes -> _DET_ trace filenames, fetch + parse KML
+    function parseKml(text) {
+      return [...text.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/g)]
+        .map((m) => m[1].trim().split(/\s+/).map((s) => { const [lon, lat] = s.split(',').map(Number); return [lon, lat]; }).filter((q) => isFinite(q[0]) && isFinite(q[1])))
+        .filter((cc) => cc.length >= 2);
+    }
+    async function loadCurrent() {
+      try {
+        const ids = new Set(Object.keys(stats));
+        const routes = await (await fetch(`${API}/rest/Routes/GetAllRoutes?_=${Date.now()}`)).json();
+        const feats = [];
+        curDetour = {};
+        await Promise.all(routes.map(async (rt) => {
+          const id = String(rt.RouteId);
+          if (!ids.has(id)) return;
+          const fn = rt.RouteTraceFilename || '';
+          if (!/_DET_/.test(fn)) return; // only currently-detoured routes carry a _DET_ trace
+          curDetour[id] = { file: fn };
+          try {
+            const kml = await (await fetch(`${API}/Resources/Traces/${fn}?_=${Date.now()}`)).text();
+            for (const cc of parseKml(kml)) feats.push({ type: 'Feature', properties: { routeId: id }, geometry: { type: 'LineString', coordinates: cc } });
+          } catch {}
+        }));
+        if (map.getSource('cur')) map.getSource('cur').setData({ type: 'FeatureCollection', features: feats });
+        applyRoute();
+      } catch (e) { console.warn('current detour fetch failed', e); }
+    }
+
+    fetch('./data/live-vs-canonical-stats.json').then((r) => r.json()).then((d) => {
+      stats = d.routes; logWindow = d.logWindow;
+      const sel = document.getElementById('routeSel');
+      const ids = Object.keys(stats).sort((a, b) => (+a || 1e9) - (+b || 1e9));
+      sel.innerHTML = '<option value="all">all routes</option>' + ids.map((id) => `<option value="${id}">route ${id}${stats[id].detouredHist ? ' (DET)' : ''}</option>`).join('');
+      sel.addEventListener('change', applyRoute);
+      if (map && map.getSource('cmp')) applyRoute(); else renderStats('all');
+    });
+  </script>
+</body>
+</html>
